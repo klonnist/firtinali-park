@@ -87,6 +87,20 @@
   }
   .btns button:hover { background: rgba(40, 52, 70, 0.7); }
   .btns button.off { color: var(--muted); }
+  .seg {
+    display: flex; gap: 2px; padding: 3px; pointer-events: auto;
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 11px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .seg button {
+    font: inherit; font-size: 13px; color: var(--muted); cursor: pointer;
+    background: transparent; border: none; padding: 6px 9px; border-radius: 8px;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button.sel { background: rgba(255,255,255,0.18); color: #fff; }
+  body.touch #weatherSeg span { display: none; }
+  .start-weather { display: inline-flex; margin: -8px auto 22px; }
+  .start-weather button { font-size: 15px; padding: 8px 14px; }
   #windbox { width: 190px; padding: 10px 12px; }
   #windbox .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   #windArrow { width: 22px; height: 22px; transition: transform 0.25s linear; }
@@ -137,7 +151,8 @@
   #joy.run #joyKnob { background: rgba(255,150,80,0.85); }
   #joyLabel {
     position: absolute; left: 0; right: 0; bottom: -20px; text-align: center;
-    font-size: 11px; color: var(--muted); pointer-events: none;
+    font-size: 11px; color: #dfe6ef; pointer-events: none;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);       /* karlı zeminde de okunsun */
   }
   .tbtn {
     position: absolute; pointer-events: auto; touch-action: none;
@@ -179,9 +194,15 @@
 <!-- Başlangıç ekranı -->
 <div id="start">
   <div class="start-card">
-    <div class="badge">⛈️ Fırtına yaklaşıyor</div>
+    <div class="badge" id="startBadge">⛈️ Fırtına yaklaşıyor</div>
     <h1>Fırtınalı Park</h1>
-    <p>Rüzgar ağaçları savuruyor, uzakta şimşekler çakıyor. Basketbol topunu kap, parkta dolaş ve potaya birkaç atış yap.</p>
+    <p>Fırtınada rüzgar ağaçları savurur ve şimşekler çakar, güneşte kuşlar öter, karda her yer beyaza bürünür. Havayı seç, topunu kap ve potaya birkaç atış yap.</p>
+    <div class="seg start-weather">
+      <button data-w="storm" class="sel">⛈️ Fırtına</button>
+      <button data-w="sunny">☀️ Güneşli</button>
+      <button data-w="snow">❄️ Karlı</button>
+    </div>
+    <br>
     <button id="startBtn" disabled>Yükleniyor…</button>
     <div class="hint key-hint">🎧 Sesli deneyim · Yön tuşları / WASD ile gez</div>
     <div class="hint touch-hint">🎧 Sesli deneyim · Sol joystick ile yürü, ekranı sürükleyerek bak, iki parmakla yakınlaş</div>
@@ -200,6 +221,11 @@
       <button id="soundBtn" title="Ses aç/kapa (M)">🔊 Ses</button>
       <button id="rainBtn" class="off" title="Yağmur aç/kapa (R)">🌧️ Yağmur</button>
     </div>
+    <div class="seg" id="weatherSeg" title="Hava durumu (1 / 2 / 3)">
+      <button data-w="storm" class="sel">⛈️<span> Fırtına</span></button>
+      <button data-w="sunny">☀️<span> Güneşli</span></button>
+      <button data-w="snow">❄️<span> Karlı</span></button>
+    </div>
     <div id="windbox" class="panel">
       <div class="row">
         <span>💨 Rüzgar</span>
@@ -217,6 +243,7 @@
     <div><b><kbd>Space</kbd></b> <span>Zıpla</span></div>
     <div><b><kbd>F</kbd></b> <span>Potaya at</span></div>
     <div><b><kbd>R</kbd> / <kbd>M</kbd></b> <span>Yağmur / Ses</span></div>
+    <div><b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b> <span>Fırtına / Güneş / Kar</span></div>
     <div><b>🖱️ Sürükle</b> <span>Kamerayı döndür</span></div>
     <div><b>🖱️ Tekerlek</b> <span>Yakınlaştır</span></div>
   </div>
@@ -330,6 +357,10 @@ const skyUniforms = {
   uFlashDir: { value: new THREE.Vector3(0, 1, 0) },
   uFlashColor: { value: new THREE.Color(0.75, 0.8, 1.0) },
   uCloudOffset: { value: new THREE.Vector2() },
+  uCloudCover: { value: 1 },                      // 1 = kapalı, ~0.3 = parçalı bulutlu
+  uSunAmt: { value: 0 },                          // güneş diski görünürlüğü
+  uSunDir: { value: SUN_OFFSET.clone().normalize() },
+  uSunColor: { value: new THREE.Color(1.0, 0.92, 0.75) },
 };
 const skyMat = new THREE.ShaderMaterial({
   uniforms: skyUniforms,
@@ -344,8 +375,8 @@ const skyMat = new THREE.ShaderMaterial({
       gl_Position = p.xyww; // her zaman en arkada
     }`,
   fragmentShader: /* glsl */`
-    uniform vec3 uTop, uHorizon, uBottom, uCloudDark, uCloudLight, uFlashColor, uFlashDir;
-    uniform float uFlash;
+    uniform vec3 uTop, uHorizon, uBottom, uCloudDark, uCloudLight, uFlashColor, uFlashDir, uSunDir, uSunColor;
+    uniform float uFlash, uCloudCover, uSunAmt;
     uniform vec2 uCloudOffset;
     varying vec3 vDir;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -366,10 +397,14 @@ const skyMat = new THREE.ShaderMaterial({
       vec3 col;
       if (h > 0.0) {
         col = mix(uHorizon, uTop, smoothstep(0.0, 0.55, h));
+        // Güneş diski + hale (bulutlar önünden geçebilir)
+        float sd = max(dot(d, uSunDir), 0.0);
+        col += uSunColor * uSunAmt * (pow(sd, 1500.0) * 8.0 + pow(sd, 60.0) * 0.45 + pow(sd, 6.0) * 0.12);
         vec2 uv = d.xz / (h + 0.12) * 0.8 + uCloudOffset;
         float n = fbm(uv);
         float n2 = fbm(uv * 2.2 - uCloudOffset * 0.6 + 4.0);
-        float c = smoothstep(0.35, 0.78, n * 0.75 + n2 * 0.35);
+        float open = 1.0 - uCloudCover;
+        float c = smoothstep(0.35 + open * 0.28, 0.78 + open * 0.12, n * 0.75 + n2 * 0.35);
         float fade = smoothstep(0.0, 0.2, h);
         vec3 cloudCol = mix(uCloudDark, uCloudLight, n2);
         col = mix(col, cloudCol, c * fade * 0.85);
@@ -400,7 +435,68 @@ const windUniforms = {
   uTime: { value: 0 },
   uWind: { value: windStrength },
   uWindDir: { value: wind.dir },
+  uSnow: { value: 0 },         // 0..1 zemin/ağaç/çimen üzerindeki kar örtüsü
+  uGrassH: { value: 1 },       // çimen boyu çarpanı (karda kısalır)
 };
+
+/* =====================================================================
+   HAVA DURUMU (fırtına / güneşli / karlı — yumuşak geçişli)
+   ===================================================================== */
+const WEATHERS = {
+  storm: {
+    label: '⛈️ Fırtına', badge: '⛈️ Fırtına yaklaşıyor',
+    top: 0x1d2633, fog: 0x56616f, bottom: 0x3a4350, cloudDark: 0x232b37, cloudLight: 0x5d6879,
+    hemiSky: 0x9aa8c0, hemiGround: 0x34422a, sunColor: 0xd0d8ea,
+    cloudCover: 1, sunAmt: 0, hemi: 1.15, sun: 1.5, exposure: 1.2, fogDensity: 0.0125,
+    windMul: 1, gustMul: 1, snow: 0, snowfall: 0, grassH: 1, leaves: 1, dust: 1, glasses: 0,
+  },
+  sunny: {
+    label: '☀️ Güneşli', badge: '☀️ Güneşli bir gün',
+    top: 0x3a78c9, fog: 0xb3cbe3, bottom: 0x8aa0b5, cloudDark: 0xc4d1e2, cloudLight: 0xffffff,
+    hemiSky: 0xcfe4ff, hemiGround: 0x5a6d3c, sunColor: 0xfff0d6,
+    cloudCover: 0.3, sunAmt: 1, hemi: 0.95, sun: 2.8, exposure: 1.0, fogDensity: 0.0055,
+    windMul: 0.45, gustMul: 0.3, snow: 0, snowfall: 0, grassH: 1, leaves: 0.35, dust: 0.4, glasses: 1,
+  },
+  snow: {
+    label: '❄️ Karlı', badge: '❄️ Kar yağıyor',
+    top: 0x8794a8, fog: 0xc6ced8, bottom: 0xb8c0ca, cloudDark: 0x939eae, cloudLight: 0xdde3ea,
+    hemiSky: 0xe2e9f3, hemiGround: 0x9aa4ae, sunColor: 0xdde6f5,
+    cloudCover: 0.95, sunAmt: 0, hemi: 1.3, sun: 0.9, exposure: 1.05, fogDensity: 0.02,
+    windMul: 0.65, gustMul: 0.55, snow: 1, snowfall: 1, grassH: 0.35, leaves: 0.12, dust: 0, glasses: 0,
+  },
+};
+const W_COLORS = ['top', 'fog', 'bottom', 'cloudDark', 'cloudLight', 'hemiSky', 'hemiGround', 'sunColor'];
+const W_NUMBERS = ['cloudCover', 'sunAmt', 'hemi', 'sun', 'exposure', 'fogDensity', 'windMul', 'gustMul',
+  'snow', 'snowfall', 'grassH', 'leaves', 'dust', 'glasses'];
+let weather = 'storm';
+const W = {};                                     // o anki (geçiş halindeki) değerler
+function setWeatherInstant(key) {
+  const p = WEATHERS[key];
+  for (const k of W_COLORS) (W[k] ||= new THREE.Color()).set(p[k]);
+  for (const k of W_NUMBERS) W[k] = p[k];
+}
+setWeatherInstant(weather);
+const _wc = new THREE.Color();
+// Her karede hedef profile doğru yumuşakça ilerle (~3-4 sn'lik geçiş)
+function updateWeather(dt) {
+  const p = WEATHERS[weather], k = damp(0.9, dt);
+  for (const key of W_COLORS) W[key].lerp(_wc.set(p[key]), k);
+  for (const key of W_NUMBERS) W[key] += (p[key] - W[key]) * k;
+  skyUniforms.uTop.value.copy(W.top);
+  skyUniforms.uBottom.value.copy(W.bottom);
+  skyUniforms.uCloudDark.value.copy(W.cloudDark);
+  skyUniforms.uCloudLight.value.copy(W.cloudLight);
+  skyUniforms.uCloudCover.value = W.cloudCover;
+  skyUniforms.uSunAmt.value = W.sunAmt;
+  FOG_BASE.copy(W.fog);
+  hemi.color.copy(W.hemiSky);
+  hemi.groundColor.copy(W.hemiGround);
+  sun.color.copy(W.sunColor);
+  renderer.toneMappingExposure = W.exposure;
+  windUniforms.uSnow.value = W.snow;
+  windUniforms.uGrassH.value = W.grassH;
+}
+
 const gust = { t: -100, amp: 0, a: 1, h: 1, r: 1 };
 let nextGustAt = 4;
 
@@ -422,7 +518,7 @@ function updateWind(dt) {
   }
   // Zamanla değişen taban dalgalanma + esinti
   const base = 0.32 + 0.12 * Math.sin(time * 0.21) + 0.08 * Math.sin(time * 0.53 + 1.3) + 0.05 * Math.sin(time * 1.7 + 0.4);
-  windStrength = clamp(base + gustEnvelope(time), 0.05, 1.2);
+  windStrength = clamp(base * W.windMul + gustEnvelope(time) * W.gustMul, 0.03, 1.2);
   gustFactor = smoothstep(windStrength, 0.6, 1.0);
   wind.angle = 0.6 + 0.35 * Math.sin(time * 0.043) + 0.12 * Math.sin(time * 0.17);
   wind.dir.set(Math.cos(wind.angle), Math.sin(wind.angle));
@@ -472,7 +568,21 @@ function makeGroundTexture() {
 
 const groundGeo = new THREE.PlaneGeometry(600, 600);
 groundGeo.rotateX(-Math.PI / 2);
-const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ map: makeGroundTexture() }));
+// Karlı havada zemin dokusunu kar rengine karıştır (dokunun deseni hafifçe seçilsin)
+function addSnowCover(material, amount) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uSnow = windUniforms.uSnow;
+    shader.uniforms.uSnowMul = { value: amount };
+    shader.fragmentShader = 'uniform float uSnow;\nuniform float uSnowMul;\n' + shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `#include <map_fragment>
+       float snowLum = dot(diffuseColor.rgb, vec3(0.333));
+       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.89, 0.94) * (0.9 + snowLum * 0.4), uSnow * uSnowMul);`
+    );
+  };
+  return material;
+}
+const ground = new THREE.Mesh(groundGeo, addSnowCover(new THREE.MeshLambertMaterial({ map: makeGroundTexture() }), 0.95));
 ground.receiveShadow = true;
 scene.add(ground);
 
@@ -504,7 +614,7 @@ function makeCourtTexture() {
 const court = new THREE.Group();
 court.position.set(COURT_CENTER.x, 0.012, COURT_CENTER.z);
 court.rotation.y = HOOP_ANGLE;
-const courtMesh = new THREE.Mesh(new THREE.CircleGeometry(COURT_R, 48), new THREE.MeshLambertMaterial({ map: makeCourtTexture() }));
+const courtMesh = new THREE.Mesh(new THREE.CircleGeometry(COURT_R, 48), addSnowCover(new THREE.MeshLambertMaterial({ map: makeCourtTexture() }), 0.75));
 courtMesh.rotation.x = -Math.PI / 2;
 courtMesh.receiveShadow = true;
 court.add(courtMesh);
@@ -545,11 +655,19 @@ function foliageMaterial(color) {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
-    shader.vertexShader = 'uniform float uTime;\nuniform float uWind;\n' + shader.vertexShader.replace(
+    shader.uniforms.uSnow = windUniforms.uSnow;
+    shader.vertexShader = 'uniform float uTime;\nuniform float uWind;\nvarying float vUp;\n' + shader.vertexShader.replace(
       '#include <begin_vertex>',
       `vec3 transformed = vec3(position);
        float ft = uTime * (3.0 + uWind * 7.0) + position.x * 2.1 + position.y * 1.7 + position.z * 2.5;
-       transformed += vec3(sin(ft), sin(ft * 1.3 + 1.0) * 0.5, cos(ft * 0.9)) * (0.012 + 0.05 * uWind);`
+       transformed += vec3(sin(ft), sin(ft * 1.3 + 1.0) * 0.5, cos(ft * 0.9)) * (0.012 + 0.05 * uWind);
+       vUp = normalize(mat3(modelMatrix) * normal).y;`
+    );
+    // Karlı havada yukarı bakan yüzeylere kar örtüsü
+    shader.fragmentShader = 'uniform float uSnow;\nvarying float vUp;\n' + shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.93, 0.97), smoothstep(0.2, 0.6, vUp) * uSnow * 0.92);`
     );
   };
   return m;
@@ -686,12 +804,16 @@ function updateTrees() {
     shader.uniforms.uTime = windUniforms.uTime;
     shader.uniforms.uWind = windUniforms.uWind;
     shader.uniforms.uWindDir = windUniforms.uWindDir;
-    shader.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform vec2 uWindDir;\n' +
+    shader.uniforms.uSnow = windUniforms.uSnow;
+    shader.uniforms.uGrassH = windUniforms.uGrassH;
+    shader.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform vec2 uWindDir;\nuniform float uGrassH;\nvarying float vH;\n' +
       shader.vertexShader.replace('#include <project_vertex>', `
         vec4 wp = instanceMatrix * vec4(transformed, 1.0);
+        wp.y *= uGrassH;                                   // karda otlar kısalır
         vec2 ip = instanceMatrix[3].xz;
         float hgt = position.y;
-        float bladeH = length(instanceMatrix[1].xyz);
+        vH = hgt;
+        float bladeH = length(instanceMatrix[1].xyz) * uGrassH;
         // Rüzgar yönünde ilerleyen dalgalar
         float ph = dot(ip, uWindDir) * 0.3 - uTime * (1.6 + uWind * 2.8);
         float wave = sin(ph) * 0.5 + 0.5;
@@ -704,9 +826,12 @@ function updateTrees() {
         gl_Position = projectionMatrix * mvPosition;
       `);
     // Arka yüzde normal ters çevrilmesin (yoksa otların yarısı siyah görünür)
-    shader.fragmentShader = shader.fragmentShader.replace(
+    shader.fragmentShader = 'uniform float uSnow;\nvarying float vH;\n' + shader.fragmentShader.replace(
       '#include <normal_fragment_begin>',
       '#include <normal_fragment_begin>\n  normal = normalize(vNormal);'
+    ).replace(
+      '#include <color_fragment>',
+      '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.9, 0.95), uSnow * (0.45 + 0.45 * vH));'
     );
   };
 
@@ -912,6 +1037,40 @@ for (const [parent, x, y, z, len] of [
   strapTails.push(tail);
 }
 
+// Hava durumuna göre aksesuarlar: karda bere + atkı, güneşte güneş gözlüğü
+const winterMat = M(0xd64545), winterLight = M(0xf4f4f4), scarfMat = M(0x2f9e6b);
+const beanie = new THREE.Group();                    // pivot: berenin ortası (ölçeklenirken kaymasın)
+beanie.position.set(0, 0.44, -0.01);
+beanie.add(part(0.5, 0.17, 0.46, winterMat, 0, 0, 0, 0.07));
+beanie.add(part(0.51, 0.07, 0.47, winterLight, 0, -0.07, 0, 0.03));
+const pompom = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), winterLight);
+pompom.position.y = 0.11; pompom.castShadow = true;
+beanie.add(pompom);
+head.add(beanie);
+const scarf = new THREE.Group();
+scarf.position.set(0, 0.575, 0);
+scarf.add(part(0.3, 0.08, 0.29, scarfMat, 0, 0, 0, 0.035));
+torso.add(scarf);
+const scarfTail = new THREE.Group();                 // atkı ucu da rüzgarda dalgalanır
+scarfTail.position.set(0.08, -0.015, 0.14);
+scarfTail.add(part(0.08, 0.24, 0.02, scarfMat, 0, -0.12, 0));
+scarf.add(scarfTail);
+strapTails.push(scarfTail);
+const glasses = new THREE.Group();
+glasses.position.set(0, 0.215, 0.207);
+const glassMat = M(0x111111, { roughness: 0.15, metalness: 0.4 });
+glasses.add(part(0.38, 0.025, 0.02, glassMat, 0, 0.02, -0.002));
+for (const sx of [-1, 1]) glasses.add(part(0.13, 0.08, 0.02, glassMat, 0.09 * sx, -0.01, 0.003, 0.02));
+head.add(glasses);
+function updateAccessories() {
+  const s = smoothstep(W.snow, 0.3, 0.8), g = smoothstep(W.glasses, 0.3, 0.8);
+  for (const [obj, v] of [[beanie, s], [scarf, s], [glasses, g]]) {
+    obj.visible = v > 0.01;
+    obj.scale.setScalar(Math.max(0.001, v));
+  }
+  hairTufts.forEach(t => { t.visible = s < 0.6; });     // bere takınca saç tutamları gizlenir
+}
+
 // Basketbol topu (canvas dokusu: turuncu + siyah dikişler)
 const BALL_R = 0.12;
 function makeBallTexture() {
@@ -957,6 +1116,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') throwBall();
   if (e.code === 'KeyR') toggleRain();
   if (e.code === 'KeyM') toggleSound();
+  if (e.code === 'Digit1' || e.code === 'Numpad1') setWeather('storm');
+  if (e.code === 'Digit2' || e.code === 'Numpad2') setWeather('sunny');
+  if (e.code === 'Digit3' || e.code === 'Numpad3') setWeather('snow');
 });
 window.addEventListener('keyup', (e) => {
   if (BLOCK_KEYS.has(e.code)) e.preventDefault();
@@ -1565,7 +1727,9 @@ function updateParticles(dt) {
     dustPos[j + 2] = wrapAround(dustPos[j + 2], cz, DUST_AREA);
   }
   dustGeo.attributes.position.needsUpdate = true;
-  dustMat.opacity = 0.06 + ws * 0.45;
+  dustMat.opacity = (0.06 + ws * 0.45) * W.dust;
+  dust.visible = W.dust > 0.01;
+  leaves.count = Math.round(LEAF_COUNT * W.leaves);   // havaya göre yaprak miktarı
 }
 
 /* =====================================================================
@@ -1587,10 +1751,14 @@ rain.visible = false;
 scene.add(rain);
 let rainOn = false;
 
+// Yağmur yalnızca fırtına havasında yağar
+const rainActive = () => rainOn && weather === 'storm';
+
 function updateRain(dt) {
-  const targetDensity = rainOn ? 0.017 : FOG_DENSITY;
-  scene.fog.density += (targetDensity - scene.fog.density) * damp(1, dt);
-  if (!rainOn) return;
+  const targetDensity = W.fogDensity + (rainActive() ? 0.0045 : 0);
+  scene.fog.density += (targetDensity - scene.fog.density) * damp(1.5, dt);
+  rain.visible = rainActive();
+  if (!rain.visible) return;
   const vx = wind.dir.x * windStrength * 7, vz = wind.dir.y * windStrength * 7, vy = -20;
   const cx = player.pos.x, cz = player.pos.z;
   for (let i = 0; i < RAIN_COUNT; i++) {
@@ -1608,6 +1776,46 @@ function updateRain(dt) {
     rainPos[k + 3] = x - vx * 0.04; rainPos[k + 4] = y - vy * 0.04; rainPos[k + 5] = z - vz * 0.04;
   }
   rainGeo.attributes.position.needsUpdate = true;
+}
+
+/* =====================================================================
+   KAR YAĞIŞI (karlı havada; rüzgarla savrulan, salınarak düşen taneler)
+   ===================================================================== */
+const SNOW_COUNT = isMobile ? 1500 : 3500, SNOW_AREA = 30, SNOW_H = 22;
+const snowPos = new Float32Array(SNOW_COUNT * 3);
+const snowK = new Float32Array(SNOW_COUNT);
+for (let i = 0; i < SNOW_COUNT; i++) {
+  snowPos[i * 3] = rr(-SNOW_AREA, SNOW_AREA);
+  snowPos[i * 3 + 1] = rr(0, SNOW_H);
+  snowPos[i * 3 + 2] = rr(-SNOW_AREA, SNOW_AREA);
+  snowK[i] = rr(0.6, 1.4);
+}
+const snowGeo = new THREE.BufferGeometry();
+snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3).setUsage(THREE.DynamicDrawUsage));
+const snowMat = new THREE.PointsMaterial({
+  size: isMobile ? 0.16 : 0.13, map: makeDotTexture(), color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
+});
+const snowfall = new THREE.Points(snowGeo, snowMat);
+snowfall.frustumCulled = false;
+snowfall.visible = false;
+scene.add(snowfall);
+
+function updateSnow(dt) {
+  snowfall.visible = W.snowfall > 0.01;
+  if (!snowfall.visible) return;
+  snowMat.opacity = 0.9 * W.snowfall;
+  const ws = windStrength, wdx = wind.dir.x, wdz = wind.dir.y;
+  const cx = player.pos.x, cz = player.pos.z;
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    const j = i * 3, k = snowK[i];
+    snowPos[j] += (wdx * ws * 4.5 * k + Math.sin(time * 1.3 + i) * 0.45) * dt;
+    snowPos[j + 2] += (wdz * ws * 4.5 * k + Math.cos(time * 1.1 + i * 0.7) * 0.45) * dt;
+    snowPos[j + 1] -= (0.9 + k * 0.6) * dt;
+    if (snowPos[j + 1] < 0) snowPos[j + 1] += SNOW_H;
+    snowPos[j] = wrapAround(snowPos[j], cx, SNOW_AREA);
+    snowPos[j + 2] = wrapAround(snowPos[j + 2], cz, SNOW_AREA);
+  }
+  snowGeo.attributes.position.needsUpdate = true;
 }
 
 /* =====================================================================
@@ -1695,7 +1903,10 @@ function triggerStrike(forceAngle, forceDist) {
 }
 
 function updateLightning(dt) {
-  if (time > lightning.next) triggerStrike();
+  if (time > lightning.next) {
+    if (weather === 'storm') triggerStrike();       // şimşek yalnızca fırtınada
+    else lightning.next = time + rr(6, 15);
+  }
   flash = 0;
   const a = lightning.active;
   if (a) {
@@ -1720,8 +1931,8 @@ function updateLightning(dt) {
     if (a.t > 5) lightning.active = null;
   }
   // Işık, gökyüzü ve sis şimşekle aydınlanır
-  hemi.intensity = HEMI_BASE + flash * 2.2;
-  sun.intensity = SUN_BASE + flash * 0.4;
+  hemi.intensity = W.hemi + flash * 2.2;
+  sun.intensity = W.sun + flash * 0.4;
   flashLight.intensity = flash * 3.5;
   skyUniforms.uFlash.value = flash;
   scene.fog.color.copy(FOG_BASE).lerp(FOG_FLASH, Math.min(1, flash * 0.7));
@@ -1802,8 +2013,38 @@ function updateAudio() {
   audio.g1.gain.setTargetAtTime(0.06 + ws * 0.5, t, 0.15);
   audio.bp.frequency.setTargetAtTime(380 + ws * 520 + Math.sin(time * 0.9) * 90, t, 0.2);
   audio.g2.gain.setTargetAtTime(Math.max(0, ws - 0.35) * 0.18, t, 0.2);
-  audio.g3.gain.setTargetAtTime(rainOn ? 0.16 : 0, t, 0.4);
+  audio.g3.gain.setTargetAtTime(rainActive() ? 0.16 : 0, t, 0.4);
+  // Güneşli havada ara ara kuş cıvıltısı
+  if (weather === 'sunny' && W.sunAmt > 0.6 && time > nextChirpAt) {
+    playChirp();
+    nextChirpAt = time + rr(1.2, 4.5);
+  }
   if (audio.pan) audio.pan.pan.setTargetAtTime(Math.sin(time * 0.3) * 0.35, t, 0.3);
+}
+
+let nextChirpAt = 0;
+// Kuş cıvıltısı: hızlı frekans süpürmeli birkaç kısa nota, rastgele yönden
+function playChirp() {
+  const ctx = audio.ctx;
+  if (!ctx) return;
+  let t = ctx.currentTime + 0.02;
+  const base = rr(2600, 4200), notes = 2 + Math.floor(Math.random() * 4);
+  const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+  if (pan) { pan.pan.value = rr(-0.8, 0.8); pan.connect(audio.master); }
+  for (let i = 0; i < notes; i++) {
+    const o = ctx.createOscillator(); o.type = 'sine';
+    const f = base * rr(0.9, 1.15);
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.exponentialRampToValueAtTime(f * rr(1.2, 1.5), t + 0.05);
+    o.frequency.exponentialRampToValueAtTime(f * 0.9, t + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(rr(0.025, 0.05), t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    o.connect(g).connect(pan || audio.master);
+    o.start(t); o.stop(t + 0.12);
+    t += rr(0.1, 0.18);
+  }
 }
 
 function playThunder(closeness) {
@@ -1900,10 +2141,26 @@ function toggleSound() {
   soundBtn.classList.toggle('off', audio.muted);
 }
 function toggleRain() {
+  if (weather !== 'storm') return;                 // yağmur yalnızca fırtınada
   rainOn = !rainOn;
-  rain.visible = rainOn;
   rainBtn.classList.toggle('off', !rainOn);
 }
+// Hava durumu seçimi: başlangıç ekranında anında, oyunda yumuşak geçişle
+function setWeather(key) {
+  if (!WEATHERS[key]) return;
+  const changed = key !== weather;
+  weather = key;
+  if (!started) setWeatherInstant(key);
+  document.querySelectorAll('[data-w]').forEach(b => b.classList.toggle('sel', b.dataset.w === key));
+  document.getElementById('startBadge').textContent = WEATHERS[key].badge;
+  rainBtn.style.display = key === 'storm' ? '' : 'none';
+  if (key === 'storm') lightning.next = Math.min(lightning.next, time + 4);
+  if (started && changed) showToast(WEATHERS[key].label);
+}
+document.querySelectorAll('[data-w]').forEach(b => b.addEventListener('click', (e) => {
+  setWeather(b.dataset.w);
+  e.currentTarget.blur();
+}));
 // Buton tıklandıktan sonra odağı bırak: Space butona basmasın
 soundBtn.addEventListener('click', (e) => { toggleSound(); e.currentTarget.blur(); });
 rainBtn.addEventListener('click', (e) => { toggleRain(); e.currentTarget.blur(); });
@@ -1920,9 +2177,10 @@ startBtn.addEventListener('click', () => {
   startEl.classList.add('gone');
   hudEl.classList.remove('hidden');
   startBtn.blur();
-  // Kamerayı karakterin arkasına al ve ilk şimşeği yakında çak
+  // Kamerayı karakterin arkasına al ve (fırtınadaysa) ilk şimşeği yakında çak
   cam.yaw = player.heading + Math.PI;
   lightning.next = time + 3;
+  nextChirpAt = time + 1;
 });
 
 let hudTimer = 0, fpsFrames = 0, fpsTime = 0;
@@ -1963,13 +2221,16 @@ const clock = new THREE.Clock();
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
+  updateWeather(dt);
   updateWind(dt);
   updatePlayer(dt);
   if (ball.state === 'thrown') updateBallPhysics(dt);
   animateCharacter(dt);
+  updateAccessories();
   updateTrees();
   updateParticles(dt);
   updateRain(dt);
+  updateSnow(dt);
   updateLightning(dt);
   updateCamera(dt);
   updateAudio();
@@ -1979,7 +2240,8 @@ function frame() {
 renderer.setAnimationLoop(frame);
 
 // Yükleme bitti: başlat butonunu etkinleştir
-window.__parkReady = true;startBtn.disabled = false;
+window.__parkReady = true;
+startBtn.disabled = false;
 startBtn.textContent = 'Başlamak için tıkla';
 </script>
 </body>
