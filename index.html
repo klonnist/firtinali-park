@@ -171,6 +171,26 @@
   #btnAct { display: none; right: max(18px, env(safe-area-inset-right)); bottom: calc(max(22px, env(safe-area-inset-bottom)) + 92px);
             border-color: #7fe0a0; box-shadow: 0 0 16px rgba(110, 230, 150, 0.45); }
   #btnAct.show { display: flex; }
+  #btnPass { display: none; right: calc(max(18px, env(safe-area-inset-right)) + 88px); bottom: calc(max(22px, env(safe-area-inset-bottom)) + 112px);
+             border-color: #7fc8ff; box-shadow: 0 0 16px rgba(110, 180, 255, 0.45); }
+  #btnPass.show { display: flex; }
+  #btnPass b { font-weight: 700; font-size: 11px; }
+
+  /* ---------- Oyun arkadaşlarının isim etiketi ve konuşma balonu ---------- */
+  .npc-tag { position: absolute; transform: translate(-50%, -100%); pointer-events: none; text-align: center; display: none; }
+  .npc-tag .name { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 800; color: #fff; }
+  .npc-tag .say {
+    display: none; position: relative; margin-bottom: 7px; padding: 6px 11px; border-radius: 12px;
+    background: #fff; color: #1b2330; font-size: 14px; font-weight: 800; white-space: nowrap;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+  }
+  .npc-tag .say.show { display: block; animation: bubblePop 0.25s ease-out; }
+  .npc-tag .say::after {
+    content: ''; position: absolute; left: 50%; bottom: -6px; margin-left: -6px;
+    border: 6px solid transparent; border-top-color: #fff; border-bottom: 0;
+  }
+  @keyframes bubblePop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  body.touch .npc-tag .say { font-size: 12px; padding: 5px 9px; }
   #btnAct b { font-weight: 700; font-size: 11px; }
 
   /* ---------- Enerji ve sağlıklı seçimler ---------- */
@@ -248,6 +268,7 @@
 <div id="hud" class="hidden">
   <div id="scorebox" class="panel">
     <div class="big">🏀 Basket: <span id="score">0</span> &nbsp;⭐ <span id="stars">0</span></div>
+    <div style="color:var(--muted)">🤝 Takım sayısı: <span id="team">0</span></div>
     <div style="color:var(--muted)">Potaya uzaklık: <span id="hoopDist">–</span></div>
     <div class="energy-row"><span>⚡</span><div id="energyBar"><div id="energyFill"></div></div><span id="energyNum">100</span></div>
     <div id="tiredHint"></div>
@@ -278,6 +299,7 @@
     <div><b><kbd>Shift</kbd></b> <span>Koş</span></div>
     <div><b><kbd>Space</kbd></b> <span>Zıpla</span></div>
     <div><b><kbd>F</kbd></b> <span>Potaya at</span></div>
+    <div><b><kbd>P</kbd></b> <span>Pas ver / topu iste</span></div>
     <div><b><kbd>E</kbd></b> <span>Otur · Ye · İç</span></div>
     <div><b><kbd>R</kbd> / <kbd>M</kbd></b> <span>Yağmur / Ses</span></div>
     <div><b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b> <span>Fırtına / Güneş / Kar</span></div>
@@ -292,6 +314,7 @@
     <button class="tbtn" id="btnThrow"><span class="ic">🏀</span>At</button>
     <button class="tbtn" id="btnJump"><span class="ic">⤒</span>Zıpla</button>
     <button class="tbtn" id="btnAct"><span class="ic">🛋️</span><b>Otur</b></button>
+    <button class="tbtn" id="btnPass"><span class="ic">🤝</span><b>Pas</b></button>
   </div>
 </div>
 
@@ -1701,6 +1724,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') toggleRain();
   if (e.code === 'KeyM') toggleSound();
   if (e.code === 'KeyE') doAction();
+  if (e.code === 'KeyP') passOrRequest();
   if (e.code === 'Digit1' || e.code === 'Numpad1') setWeather('storm');
   if (e.code === 'Digit2' || e.code === 'Numpad2') setWeather('sunny');
   if (e.code === 'Digit3' || e.code === 'Numpad3') setWeather('snow');
@@ -1721,6 +1745,7 @@ const player = {
   walkPhase: 0, landK: 0,
   sitting: false, sitK: 0,
   action: null,              // yeme/içme animasyonu: { snack, t, dur, nextBite }
+  passAnim: 0,               // göğüs pası animasyonu (1 → 0)
   tiredK: 0,                 // 0 = dinç, 1 = çok yorgun
 };
 
@@ -1945,15 +1970,19 @@ function updatePlayer(dt) {
 
 // ---------- Top durumu ----------
 const ball = {
-  state: 'held',               // 'held' | 'thrown'
+  state: 'held',               // 'held' (oyuncuda) | 'npc' (arkadaşta) | 'thrown' (şut/serbest) | 'pass' (pas havada)
   pos: new THREE.Vector3(0, 0.9, 0.3),
   vel: new THREE.Vector3(),
   dribblePhase: 0,
   dribbleBlend: 0,             // 0 = elde tutuluyor, 1 = sektiriliyor
   holdBlend: 1,                // 1 = karakterde
   throwTime: -10, pickupTime: -10, throwAnim: 0, scored: false,
+  thrower: null,               // son şutu atan (player ya da arkadaş)
+  npc: null,                   // topu tutan arkadaş
+  pass: null,                  // havadaki pas: { from, to, t, T, h }
+  assistFrom: null, assistTime: -10,   // asist takibi
 };
-let score = 0;
+let score = 0, teamScore = 0;
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const BALL_WIND = 0.5;
 
@@ -1981,9 +2010,15 @@ function throwBall() {
   }
   // Potaya dön ve başın üstünden at
   player.heading = Math.atan2(dxh, dzh);
-  const start = _v1.set(player.pos.x + Math.sin(player.heading) * 0.25, player.pos.y + 2.0, player.pos.z + Math.cos(player.heading) * 0.25);
-  // Mesafe arttıkça isabet düşer
-  const spread = 0.03 + dist * 0.022;
+  _v1.set(player.pos.x + Math.sin(player.heading) * 0.25, player.pos.y + 2.0, player.pos.z + Math.cos(player.heading) * 0.25);
+  launchShot(_v1, RIM, dist, player, 1);
+  ball.throwAnim = 1;
+}
+
+// Şut: başlangıçtan çembere yay çizen hız (oyuncu ve arkadaşlar ortak kullanır)
+function launchShot(start, RIM, dist, thrower, skill) {
+  // Mesafe arttıkça isabet düşer (skill < 1 => daha isabetli)
+  const spread = (0.03 + dist * 0.022) * skill;
   const target = _v2.copy(RIM).add(_v3.set(rr(-1, 1) * spread, 0.05, rr(-1, 1) * spread));
   // Yay: tepe noktası çemberin ~1 m üstünde -> top çembere dik açıyla girer
   const G = 9.8;
@@ -1999,8 +2034,9 @@ function throwBall() {
   );
   ball.pos.copy(start);
   ball.state = 'thrown';
+  ball.npc = null;
+  ball.thrower = thrower;
   ball.throwTime = time;
-  ball.throwAnim = 1;
   ball.scored = false;
 }
 
@@ -2064,11 +2100,9 @@ function updateBallPhysics(dt) {
       if (!ball.scored && prevY >= RIM.y && ball.pos.y < RIM.y && ball.vel.y < 0 &&
           Math.hypot(ball.pos.x - RIM.x, ball.pos.z - RIM.z) < RIM_R - BALL_R * 0.35) {
         ball.scored = true;
-        score++;
-        document.getElementById('score').textContent = score;
         hp.wobble = 1;
-        showToast('Basket! 🏀');
         playSwish();
+        onBasket();
       }
     }
 
@@ -2105,16 +2139,42 @@ function updateBallPhysics(dt) {
     ballMesh.rotateOnWorldAxis(_v3, sp * dt / BALL_R);
   }
 
-  // Karakter yanına gelince topu geri al
+  // Karakter yanına gelince topu geri al (kendi şutunda kısa bir bekleme var)
   const pdx = ball.pos.x - player.pos.x, pdz = ball.pos.z - player.pos.z;
-  const near = Math.hypot(pdx, pdz) < 0.85 && ball.pos.y < player.pos.y + 1.6;
-  if ((near && time - ball.throwTime > 0.6) || time - ball.throwTime > 15) {
+  const near = Math.hypot(pdx, pdz) < 0.85 && ball.pos.y < player.pos.y + 1.6 && !player.sitting && !player.action;
+  const wait = ball.thrower === player ? 0.6 : 0.25;
+  if ((near && time - ball.throwTime > wait) || time - ball.throwTime > 15) {
     if (time - ball.throwTime > 15) showToast('Top geri geldi');
-    ball.state = 'held';
-    ball.pickupTime = time;
-    ball.dribblePhase = 0;
+    giveToPlayer();
   }
 }
+function giveToPlayer() {
+  ball.state = 'held';
+  ball.npc = null;
+  ball.pickupTime = time;
+  ball.dribblePhase = 0;
+}
+
+// Basket olunca: kim attı, asist var mı? (takım sayısı herkesin basketini sayar)
+function onBasket() {
+  const shooter = ball.thrower;
+  teamScore++;
+  document.getElementById('team').textContent = teamScore;
+  const assist = ball.assistFrom && ball.assistFrom !== shooter && time - ball.assistTime < 10 ? ball.assistFrom : null;
+  const nameOf = (e) => (e === player ? 'Sen' : e.name);
+  if (shooter === player) {
+    score++;
+    document.getElementById('score').textContent = score;
+    showToast(assist ? `Basket! 🏀 ${assist.name} harika pas verdi! 🤝` : 'Basket! 🏀');
+    for (const n of npcs) npcSay(n, pick2(['Harika atış! 👏', 'Vay be! 🔥', 'Şampiyon! 🏆', 'Süpersin! ⭐']), 2.2);
+  } else if (shooter) {
+    showToast(assist ? `${shooter.name} sayı attı! Asist: ${nameOf(assist)} 🤝🎉` : `${shooter.name} sayı attı! 🎉`);
+    npcSay(shooter, assist === player ? 'Pasın için teşekkürler! 😊' : pick2(['Girdi! 😄', 'Sayı! 🎉', 'Yaşasın! 🙌']), 2.2);
+    if (assist === player) { energy.stars++; popText('+1 ⭐ Asist', '#ffd84a'); playChime([659, 784, 1047, 1319]); }
+  }
+  ball.assistFrom = null;
+}
+const pick2 = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 /* =====================================================================
    KARAKTER ANİMASYONU (nefes, yürüyüş, koşu, dribling, zıplama, rüzgar)
@@ -2184,6 +2244,13 @@ function animateCharacter(dt) {
     armL.rotation.x = lerp(armL.rotation.x, -2.7, k); armL.rotation.z = lerp(armL.rotation.z, -0.15, k);
     armR.rotation.x = lerp(armR.rotation.x, -2.7, k); armR.rotation.z = lerp(armR.rotation.z, 0.15, k);
     ball.throwAnim = Math.max(0, ball.throwAnim - dt * 2.2);
+  }
+  // Göğüs pası: iki kol öne doğru itilir
+  if (player.passAnim > 0) {
+    const k = Math.sin(player.passAnim * Math.PI);
+    armL.rotation.x = lerp(armL.rotation.x, -1.55, k); armL.rotation.z = lerp(armL.rotation.z, -0.1, k);
+    armR.rotation.x = lerp(armR.rotation.x, -1.55, k); armR.rotation.z = lerp(armR.rotation.z, 0.1, k);
+    player.passAnim = Math.max(0, player.passAnim - dt * 3);
   }
   // Yeme/içme: sağ el ağza gider (ısırırken hafif iner-kalkar), top sol kolun altında
   const act = player.action;
@@ -2807,9 +2874,13 @@ function initAudio() {
   Object.assign(audio, { lp, g1, bp, g2, g3, pan });
 }
 
+let lastAudioUpdate = -1;
 function updateAudio() {
   const ctx = audio.ctx;
   if (!ctx) return;
+  // Parametreleri saniyede ~20 kez güncellemek yeterli (her karede zamanlama olayı biriktirme)
+  if (time - lastAudioUpdate < 0.05) return;
+  lastAudioUpdate = time;
   const t = ctx.currentTime, ws = windStrength;
   // İçerideyken rüzgar boğuklaşır ve kısılır; rüzgar yoksa susar
   const ik = lounge.indoorK, calm = Math.min(1, ws * 4);
@@ -3041,6 +3112,7 @@ startBtn.addEventListener('click', () => {
   cam.yaw = player.heading + Math.PI;
   lightning.next = time + 3;
   nextChirpAt = time + 1;
+  setTimeout(() => showToast(`🏀 Sahada Elif ve Can seni bekliyor! ${isTouch ? '"Pas" butonuyla' : 'P ile'} pas ver`), 3500);
 });
 
 let hudTimer = 0, fpsFrames = 0, fpsTime = 0;
@@ -3063,13 +3135,25 @@ function updateHUD(dt) {
   btnThrow.classList.toggle('ready', canThrow);
   // Yakındaki eylem: masaüstünde "E · ..." ipucu, mobilde değişen eylem butonu
   const a = currentAction();
-  actionPrompt.classList.toggle('show', !!a);
   btnAct.classList.toggle('show', !!a);
   if (a) {
-    actionPrompt.textContent = `E · ${a.icon} ${a.label}`;
     btnAct.querySelector('.ic').textContent = a.icon;
     btnAct.querySelector('b').textContent = a.label;
   }
+  // Pas: top bendeyse en uygun arkadaşa pas, arkadaştaysa topu iste
+  let passLabel = null;
+  if (started && !player.sitting && !player.action) {
+    if (ball.state === 'held') { const n = bestPassTarget(); if (n) passLabel = { icon: '🤝', label: `Pas: ${n.name}`, short: 'Pas' }; }
+    else if (ball.state === 'npc' && distXZ(ball.npc.pos, player.pos) < 25) passLabel = { icon: '🙋', label: 'Topu iste', short: 'İste' };
+  }
+  btnPass.classList.toggle('show', !!passLabel);
+  if (passLabel) {
+    btnPass.querySelector('.ic').textContent = passLabel.icon;
+    btnPass.querySelector('b').textContent = passLabel.short;
+  }
+  const promptText = a ? `E · ${a.icon} ${a.label}` : passLabel ? `P · ${passLabel.icon} ${passLabel.label}` : '';
+  actionPrompt.classList.toggle('show', !!promptText);
+  actionPrompt.textContent = promptText;
   // Enerji çubuğu ve sağlıklı seçim yıldızları
   const ev = energy.value;
   energyFill.style.width = `${ev}%`;
@@ -3098,6 +3182,442 @@ window.addEventListener('resize', () => {
 });
 
 /* =====================================================================
+   OYUN ARKADAŞLARI: Elif ve Can (pas, ribaund, şut, konuşma balonları)
+   ===================================================================== */
+const inCourt = (x, z, pad = 0) => Math.abs(x - COURT.cx) < COURT.hx - pad && Math.abs(z - COURT.cz) < COURT.hz - pad;
+
+// Forma numarası (kanvas dokusu)
+function makeNumberMaterial(num) {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.font = 'bold 92px system-ui, Segoe UI, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 8; g.strokeStyle = 'rgba(0,0,0,0.35)'; g.strokeText(num, 64, 68);
+  g.fillStyle = '#ffffff'; g.fillText(num, 64, 68);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshLambertMaterial({ map: tex, transparent: true });
+}
+
+// Oyun arkadaşı modeli (oyuncuyla aynı oranlar; kız: at kuyruğu + saç bandı, erkek: ters kep)
+function makeKid(cfg) {
+  const mm = {
+    skin: M(cfg.skin), hair: M(cfg.hair, { roughness: 0.9 }), shirt: M(cfg.shirt),
+    trim: M(cfg.trim), shorts: M(cfg.shorts), shoe: M(cfg.shoe),
+  };
+  const root = new THREE.Group(), body = new THREE.Group();
+  root.add(body);
+  const legs = [1, -1].map(side => {
+    const leg = new THREE.Group();
+    leg.position.set(0.11 * side, HIP_Y, 0);
+    leg.add(part(0.17, 0.22, 0.19, mm.shorts, 0, -0.08, 0, 0.03));
+    leg.add(part(0.12, 0.36, 0.13, mm.skin, 0, -0.36, 0, 0.03));
+    leg.add(part(0.13, 0.08, 0.14, mats.sock, 0, -0.56, 0));
+    leg.add(part(0.15, 0.1, 0.26, mm.shoe, 0, -0.66, 0.04, 0.03));
+    leg.add(part(0.155, 0.03, 0.265, mats.sole, 0, -0.715, 0.04));
+    body.add(leg);
+    return leg;
+  });
+  const torso = new THREE.Group();
+  torso.position.y = HIP_Y;
+  body.add(torso);
+  torso.add(part(0.42, 0.16, 0.26, mm.shorts, 0, 0.04, 0, 0.04));
+  const chest = part(0.42, 0.46, 0.25, mm.shirt, 0, 0.32, 0, 0.06);
+  torso.add(chest);
+  torso.add(part(0.24, 0.05, 0.04, mm.trim, 0, 0.53, 0.115));                       // yaka
+  for (const s of [-1, 1]) torso.add(part(0.03, 0.4, 0.256, mm.trim, 0.195 * s, 0.32, 0));   // forma yan şeritleri
+  const numMat = makeNumberMaterial(cfg.number);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), numMat);
+  back.position.set(0, 0.34, -0.129); back.rotation.y = Math.PI;
+  torso.add(back);
+  const front = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.12), numMat);
+  front.position.set(-0.09, 0.41, 0.129);
+  torso.add(front);
+  torso.add(part(0.1, 0.06, 0.1, mm.skin, 0, 0.58, 0));                             // boyun
+  // Baş ve yüz
+  const head = new THREE.Group();
+  head.position.y = 0.6;
+  torso.add(head);
+  head.add(part(0.44, 0.4, 0.4, mm.skin, 0, 0.2, 0, 0.1));
+  for (const sx of [-1, 1]) {
+    head.add(part(0.06, 0.08, 0.02, mats.eye, 0.09 * sx, 0.2, 0.2));
+    head.add(part(0.022, 0.025, 0.01, mats.white, 0.09 * sx + 0.012, 0.222, 0.212));
+    head.add(part(0.065, 0.03, 0.01, mats.cheek, 0.15 * sx, 0.13, 0.2));
+    head.add(part(0.04, 0.08, 0.06, mm.skin, 0.235 * sx, 0.19, 0));
+    const s = part(0.04, 0.016, 0.01, mats.eye, 0.025 * sx, 0.098, 0.202);           // gülümseme
+    s.rotation.z = 0.35 * sx;
+    head.add(s);
+  }
+  head.add(part(0.47, 0.14, 0.43, mm.hair, 0, 0.39, -0.01, 0.06));
+  head.add(part(0.47, 0.28, 0.12, mm.hair, 0, 0.25, -0.16, 0.05));
+  for (const sx of [-1, 1]) head.add(part(0.05, 0.18, 0.3, mm.hair, 0.225 * sx, 0.3, -0.04));
+  let tail = null;
+  if (cfg.girl) {
+    for (let i = 0; i < 3; i++) {
+      const f = part(0.15, 0.09, 0.06, mm.hair, -0.14 + i * 0.14, 0.33, 0.19, 0.03);
+      f.rotation.z = (1 - i) * 0.2;
+      head.add(f);
+    }
+    for (const sx of [-1, 1]) head.add(part(0.06, 0.34, 0.2, mm.hair, 0.235 * sx, 0.2, -0.08, 0.03));
+    head.add(part(0.48, 0.045, 0.44, mm.trim, 0, 0.375, -0.01, 0.02));              // saç bandı
+    tail = new THREE.Group();                                                          // at kuyruğu
+    tail.position.set(0, 0.36, -0.22);
+    tail.add(part(0.09, 0.07, 0.07, mm.trim, 0, 0, -0.02, 0.03));
+    tail.add(part(0.13, 0.36, 0.11, mm.hair, 0, -0.17, -0.05, 0.05));
+    head.add(tail);
+  } else {
+    head.add(part(0.49, 0.15, 0.45, mm.trim, 0, 0.43, -0.01, 0.07));                 // ters kep
+    const visor = part(0.3, 0.03, 0.18, mm.trim, 0, 0.38, -0.29, 0.01);
+    visor.rotation.x = -0.15;
+    head.add(visor);
+    for (let i = 0; i < 3; i++) {
+      const f = part(0.12, 0.08, 0.06, mm.hair, -0.13 + i * 0.13, 0.35, 0.19, 0.02);
+      f.rotation.z = (i - 1) * 0.3;
+      head.add(f);
+    }
+  }
+  const arms = [1, -1].map(side => {
+    const arm = new THREE.Group();
+    arm.position.set(0.27 * side, 0.5, 0);
+    arm.add(part(0.13, 0.2, 0.14, mm.shirt, 0, -0.07, 0, 0.04));
+    arm.add(part(0.1, 0.26, 0.11, mm.skin, 0, -0.27, 0, 0.035));
+    arm.add(part(0.11, 0.04, 0.12, mm.trim, 0, -0.36, 0));                           // bileklik
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), mm.skin);
+    hand.position.y = -0.44;
+    hand.castShadow = true;
+    arm.add(hand);
+    torso.add(arm);
+    return { arm, hand };
+  });
+  root.scale.setScalar(cfg.scale);
+  scene.add(root);
+  return {
+    root, body, legL: legs[0], legR: legs[1], torso, chest, head, tail,
+    armL: arms[0].arm, handL: arms[0].hand, armR: arms[1].arm, handR: arms[1].hand,
+  };
+}
+
+const NPC_SPECS = [
+  { name: 'Elif', girl: true, number: '7', skin: 0xf0c39b, hair: 0x3b2314, shirt: 0xe2468f, trim: 0xffd23f,
+    shorts: 0x5b3fa0, shoe: 0x7c4dff, scale: 0.97, color: '#d63a84', start: [COURT.cx - 4, COURT.cz + 2] },
+  { name: 'Can', girl: false, number: '10', skin: 0xc98f62, hair: 0x1f150e, shirt: 0x2fa36b, trim: 0xff8a2a,
+    shorts: 0x1f2d3d, shoe: 0x2a7de1, scale: 1.0, color: '#24945c', start: [COURT.cx + 4, COURT.cz - 2] },
+];
+const npcs = NPC_SPECS.map((spec) => {
+  const kid = makeKid(spec);
+  const tag = document.createElement('div');
+  tag.className = 'npc-tag';
+  tag.innerHTML = `<div class="say"></div><span class="name" style="background:${spec.color}">${spec.name}</span>`;
+  hudEl.appendChild(tag);
+  return {
+    ...kid, name: spec.name, scale: spec.scale,
+    pos: new THREE.Vector3(spec.start[0], 0, spec.start[1]), vel: new THREE.Vector2(), heading: Math.PI / 2, speed: 0,
+    target: new THREE.Vector3(spec.start[0], 0, spec.start[1]), retargetAt: 0,
+    walkPhase: Math.random() * 6, holdTime: 0, decideAt: 2, requested: false,
+    dribblePhase: 0, dribbleK: 0, shootAnim: 0, passAnim: 0, callUntil: 0, nextChat: rr(2, 5),
+    tag, sayEl: tag.querySelector('.say'), sayUntil: 0,
+  };
+});
+
+function npcSay(n, text, dur = 1.8) {
+  n.sayEl.textContent = text;
+  n.sayEl.classList.remove('show');
+  void n.sayEl.offsetWidth;                     // animasyonu yeniden başlat
+  n.sayEl.classList.add('show');
+  n.sayUntil = time + dur;
+}
+const otherNpc = (n) => npcs.find(o => o !== n);
+const distXZ = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+// Oyuncu pas almaya hazır mı? (sahaya yakın, oturmuyor/yemiyor)
+function playerReady(n) {
+  return started && !player.sitting && !player.action && player.grounded &&
+    distXZ(n.pos, player.pos) < 17 && inCourt(player.pos.x, player.pos.z, -4);
+}
+// Pası yakalayacak noktanın dünyadaki yeri (göğüs hizası, biraz önde)
+function catchPoint(e, out) {
+  const h = e === player ? player.heading : e.heading;
+  const p = e === player ? player.pos : e.pos;
+  const s = e === player ? 1 : e.scale;
+  return out.set(p.x + Math.sin(h) * 0.32, p.y + 1.0 * s, p.z + Math.cos(h) * 0.32);
+}
+// Sahada çizgilerin içinde kalan rastgele bir nokta
+function clampToCourt(v) {
+  v.x = clamp(v.x, COURT.cx - COURT.L / 2 + 0.8, COURT.cx + COURT.L / 2 - 0.8);
+  v.z = clamp(v.z, COURT.cz - COURT.Wd / 2 + 0.6, COURT.cz + COURT.Wd / 2 - 0.6);
+  return v;
+}
+// Potaya 2.5–6 m uzaklıkta şut noktası
+function shootSpot(x, z) {
+  const { hoop } = nearestHoop(x, z);
+  const inward = Math.sign(COURT.cx - hoop.rim.x);
+  const r = rr(2.5, 6), a = rr(-1.1, 1.1);
+  return clampToCourt(new THREE.Vector3(hoop.rim.x + inward * Math.cos(a) * r, 0, hoop.rim.z + Math.sin(a) * r));
+}
+// Topu tutanın hücum ettiği potanın çevresinde boş bir yer (iki arkadaş farklı kanatlara)
+function supportSpot(n, holder) {
+  const ref = holder ? (holder === player ? player.pos : holder.pos) : n.pos;
+  const { hoop } = nearestHoop(ref.x, ref.z);
+  const inward = Math.sign(COURT.cx - hoop.rim.x);
+  const side = n === npcs[0] ? 1 : -1;
+  const a = side * rr(0.5, 1.2), r = rr(3, 6.5);
+  return clampToCourt(new THREE.Vector3(hoop.rim.x + inward * Math.cos(a) * r, 0, hoop.rim.z + Math.sin(a) * r));
+}
+
+// ---------- Pas: topu alıcının ellerine yay çizerek uçur (alıcı hareket etse de yakalar) ----------
+function startPass(passer, receiver) {
+  const from = ball.pos.clone();
+  const d = from.distanceTo(catchPoint(receiver, _v1));
+  ball.state = 'pass';
+  ball.npc = null;
+  ball.pass = { from, to: receiver, passer, t: 0, T: clamp(0.3 + d / 11, 0.4, 1.4), h: 0.35 + d * 0.06 };
+}
+function updatePass(dt) {
+  const p = ball.pass;
+  p.t += dt;
+  const s = Math.min(1, p.t / p.T);
+  catchPoint(p.to, _v1);
+  ball.pos.lerpVectors(p.from, _v1, s);
+  ball.pos.y += 4 * p.h * s * (1 - s);
+  _v3.set(_v1.z - p.from.z, 0, p.from.x - _v1.x).normalize();
+  ballMesh.rotateOnWorldAxis(_v3, dt * 10);
+  if (s >= 1) {
+    ball.pass = null;
+    ball.assistFrom = p.passer;
+    ball.assistTime = time;
+    playBounce(0.18, 210);
+    if (p.to === player) {
+      giveToPlayer();
+      if (p.passer !== player) popText('🤝', '#9fd8ff');
+    } else {
+      giveToNpc(p.to);
+      if (p.passer === player) npcSay(p.to, pick2(['Süper pas! 👍', 'Yakaladım! 😄', 'Teşekkürler! 🙌', 'Harika pas!']), 1.6);
+    }
+  }
+}
+function giveToNpc(n) {
+  ball.state = 'npc';
+  ball.npc = n;
+  ball.vel.set(0, 0, 0);
+  n.holdTime = 0;
+  n.decideAt = rr(1.3, 2.6);
+  n.requested = false;
+  n.dribblePhase = 0;
+  n.target.copy(shootSpot(n.pos.x, n.pos.z));
+}
+function npcPassTo(n, to, line) {
+  n.heading = Math.atan2((to === player ? player.pos.x : to.pos.x) - n.pos.x, (to === player ? player.pos.z : to.pos.z) - n.pos.z);
+  n.passAnim = 1;
+  if (line) npcSay(n, line, 1.6);
+  startPass(n, to);
+}
+function npcShoot(n, hoop, dist) {
+  n.heading = Math.atan2(hoop.rim.x - n.pos.x, hoop.rim.z - n.pos.z);
+  n.shootAnim = 1;
+  _v1.set(n.pos.x + Math.sin(n.heading) * 0.25, 2.0 * n.scale, n.pos.z + Math.cos(n.heading) * 0.25);
+  launchShot(_v1, hoop.rim, dist, n, 2.2);           // arkadaşlar da bazen kaçırır
+  if (Math.random() < 0.4) npcSay(n, pick2(['Şut! 🏀', 'Bakın! 👀', 'Hop!']), 1.2);
+}
+// Topu tutan arkadaş ne yapsın? Oyuncu yakındaysa çoğunlukla ona pas verir
+function npcDecide(n) {
+  const other = otherNpc(n);
+  const pReady = playerReady(n);
+  const { hoop, dist } = nearestHoop(n.pos.x, n.pos.z);
+  const r = Math.random();
+  if (pReady && r < 0.55) return npcPassTo(n, player, pick2(['Sıra sende! 🏀', 'Al bakalım!', 'Hadi, at!', 'Senin için! 😊']));
+  if (r < (pReady ? 0.72 : 0.4)) return npcPassTo(n, other, `${other.name}, yakala!`);
+  if (dist > 8) { n.target.copy(shootSpot(n.pos.x, n.pos.z)); n.decideAt = n.holdTime + 1.2; return; }
+  npcShoot(n, hoop, dist);
+}
+
+// Oyuncu: P / "Pas" butonu — top bendeyse pas ver, arkadaştaysa topu iste
+function bestPassTarget() {
+  const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);   // ekranda baktığın yön
+  let best = null, bs = -Infinity;
+  for (const n of npcs) {
+    const d = distXZ(n.pos, player.pos);
+    if (d > 22 || d < 0.8) continue;
+    const dot = ((n.pos.x - player.pos.x) * fx + (n.pos.z - player.pos.z) * fz) / d;
+    const sc = dot * 2 - d * 0.05;
+    if (sc > bs) { bs = sc; best = n; }
+  }
+  return best;
+}
+function passOrRequest() {
+  if (!started || player.sitting || player.action) return;
+  if (ball.state === 'held') {
+    const n = bestPassTarget();
+    if (!n) { showToast('🤝 Pas atacak arkadaş yok. Sahadaki Elif ve Can\'ın yanına git!'); return; }
+    player.heading = Math.atan2(n.pos.x - player.pos.x, n.pos.z - player.pos.z);
+    player.passAnim = 1;
+    startPass(player, n);
+  } else if (ball.state === 'npc') {
+    const n = ball.npc;
+    if (distXZ(n.pos, player.pos) > 25) { showToast('Çok uzaktasın! Sahaya yaklaş 🏀'); return; }
+    n.requested = true;
+    npcSay(n, pick2(['Tamam, geliyor! 👍', 'Al bakalım!', 'Yakala!']), 1.4);
+  }
+}
+
+function updateNPCs(dt) {
+  const holder = ball.state === 'npc' ? ball.npc : ball.state === 'held' ? player : null;
+  // Kaçan topu en yakın arkadaş kovalar (oyuncu daha yakınsa bekler)
+  let chaser = null;
+  if (ball.state === 'thrown' && inCourt(ball.pos.x, ball.pos.z, 0.6) && time - ball.throwTime > 0.5) {
+    let bd = Infinity;
+    for (const n of npcs) { const d = distXZ(n.pos, ball.pos); if (d < bd) { bd = d; chaser = n; } }
+    if (inCourt(player.pos.x, player.pos.z) && distXZ(player.pos, ball.pos) < bd - 0.5) chaser = null;
+  }
+  for (const n of npcs) {
+    let run = false;
+    const hasBall = ball.state === 'npc' && ball.npc === n;
+    const receiving = ball.state === 'pass' && ball.pass.to === n;
+    if (hasBall) {
+      n.holdTime += dt;
+      if (n.requested && n.holdTime > 0.35) { n.requested = false; npcPassTo(n, player, null); }
+      else if (n.holdTime > n.decideAt) npcDecide(n);
+    } else if (receiving) {
+      n.target.copy(n.pos);                       // dur ve pası bekle
+    } else if (n === chaser) {
+      n.target.set(ball.pos.x, 0, ball.pos.z);
+      run = true;
+      if (distXZ(n.pos, ball.pos) < 0.7 && ball.pos.y < 1.7 && !(ball.thrower === n && time - ball.throwTime < 0.8)) {
+        giveToNpc(n);
+        if (Math.random() < 0.5) npcSay(n, pick2(['Benim! 🙌', 'Ribaund!', 'Aldım!']), 1.2);
+      }
+    } else if (time > n.retargetAt || distXZ(n.pos, n.target) < 0.3) {
+      n.target.copy(supportSpot(n, holder));
+      n.retargetAt = time + rr(3.5, 6);
+    }
+    // Pas isteme, davet ve cesaretlendirme
+    if (!hasBall && !receiving && started && time > n.nextChat) {
+      n.nextChat = time + rr(4, 8);
+      const pd = distXZ(n.pos, player.pos);
+      if (energy.value < 25 && pd < 20) npcSay(n, 'Yorulduysan dinlen, meyve ye! 🍎', 2.2);
+      else if (holder === player && pd < 17) {
+        npcSay(n, pick2(['Pas ver! 🙋', 'Bana at!', 'Buradayım! 👋', 'Boştayım!']), 1.8);
+        n.callUntil = time + 1.6;
+      } else if (holder === player && pd < 35) npcSay(n, pick2(['Gel, beraber oynayalım! 🏀', 'Hadi gel! 👋']), 2.2);
+    }
+    // Bu karede şut/pas atıldıysa top artık elinde değil (yeniden kontrol et)
+    const holdsNow = ball.state === 'npc' && ball.npc === n;
+    moveNpc(n, dt, run, holdsNow, holder);
+    animateNpc(n, dt, holdsNow, receiving);
+  }
+  ballMesh.position.copy(ball.pos);
+  updateNpcTags();
+}
+
+function moveNpc(n, dt, run, hasBall, holder) {
+  const dx = n.target.x - n.pos.x, dz = n.target.z - n.pos.z, d = Math.hypot(dx, dz);
+  const maxS = run ? 4.6 : hasBall ? 2.6 : 2.9;
+  let tx = 0, tz = 0;
+  if (d > 0.25) { const s = Math.min(maxS, d * 2.5); tx = dx / d * s; tz = dz / d * s; }
+  n.vel.x += (tx - n.vel.x) * damp(5, dt);
+  n.vel.y += (tz - n.vel.y) * damp(5, dt);
+  n.pos.x += n.vel.x * dt;
+  n.pos.z += n.vel.y * dt;
+  // Birbirlerine ve oyuncuya girmesinler
+  for (const o of [player, ...npcs]) {
+    if (o === n) continue;
+    const ox = n.pos.x - o.pos.x, oz = n.pos.z - o.pos.z, od = Math.hypot(ox, oz) || 1e-4;
+    if (od < 0.75) { n.pos.x += ox / od * (0.75 - od); n.pos.z += oz / od * (0.75 - od); }
+  }
+  pushOutOfColliders(n.pos, 0.3, n.vel);
+  n.pos.x = clamp(n.pos.x, COURT.cx - COURT.hx + 0.6, COURT.cx + COURT.hx - 0.6);
+  n.pos.z = clamp(n.pos.z, COURT.cz - COURT.hz + 0.6, COURT.cz + COURT.hz - 0.6);
+  n.speed = n.vel.length();
+  // Yürürken gittiği yöne; dururken topa (top kendisindeyse potaya) bak
+  let face;
+  if (n.speed > 0.3) face = Math.atan2(n.vel.x, n.vel.y);
+  else if (hasBall) { const { hoop } = nearestHoop(n.pos.x, n.pos.z); face = Math.atan2(hoop.rim.x - n.pos.x, hoop.rim.z - n.pos.z); }
+  else face = Math.atan2(ball.pos.x - n.pos.x, ball.pos.z - n.pos.z);
+  n.heading = lerpAngle(n.heading, face, damp(8, dt));
+}
+
+function animateNpc(n, dt, hasBall, receiving) {
+  n.root.position.copy(n.pos);
+  n.root.rotation.y = n.heading;
+  const sp = n.speed;
+  const moveAmt = clamp(sp / 2.9, 0, 1), runAmt = clamp((sp - 2.9) / 1.7, 0, 1);
+  n.walkPhase += dt * sp * 2.4;
+  const s = Math.sin(n.walkPhase), swing = moveAmt * 0.55 + runAmt * 0.35;
+  n.legL.rotation.x = s * swing;
+  n.legR.rotation.x = -s * swing;
+  n.body.position.y = Math.abs(Math.cos(n.walkPhase)) * 0.05 * swing;
+  n.torso.rotation.x = runAmt * 0.18 + moveAmt * 0.05;
+  n.chest.scale.y = 1 + 0.02 * Math.sin(time * 2.2 + n.walkPhase * 0.1);
+  // Kollar: serbest salınım / topu tutma / dribling / pas bekleme / el sallama / şut / pas
+  n.dribbleK += (((hasBall && sp > 0.5) ? 1 : 0) - n.dribbleK) * damp(7, dt);
+  if (n.dribbleK < 0.03) n.dribblePhase = 0;
+  let lx = -s * swing * 0.9, lz = 0.06, rx = s * swing * 0.9, rz = -0.06;
+  if (hasBall) {
+    const hold = 1 - n.dribbleK;
+    const dr = -0.75 + 0.3 * (0.5 - 0.5 * Math.cos(Math.PI * 2 * n.dribblePhase));
+    lx = lerp(lx, -0.75, hold); lz = lerp(lz, -0.24, hold);
+    rx = lerp(-0.75, dr, n.dribbleK); rz = lerp(0.24, -0.18, n.dribbleK);
+  }
+  if (receiving) { lx = -1.25; lz = -0.15; rx = -1.25; rz = 0.15; }
+  if (!hasBall && time < n.callUntil) { rx = -2.9; rz = 0.25 + Math.sin(time * 12) * 0.25; }
+  if (n.shootAnim > 0) {
+    const k = Math.sin(Math.min(1, n.shootAnim) * Math.PI * 0.5);
+    lx = lerp(lx, -2.7, k); rx = lerp(rx, -2.7, k); lz = lerp(lz, -0.15, k); rz = lerp(rz, 0.15, k);
+    n.shootAnim = Math.max(0, n.shootAnim - dt * 2.2);
+  }
+  if (n.passAnim > 0) {
+    const k = Math.sin(n.passAnim * Math.PI);
+    lx = lerp(lx, -1.55, k); rx = lerp(rx, -1.55, k);
+    n.passAnim = Math.max(0, n.passAnim - dt * 3);
+  }
+  n.armL.rotation.set(lx, 0, lz);
+  n.armR.rotation.set(rx, 0, rz);
+  // At kuyruğu: koşarken ve rüzgarda geriye savrulur
+  const ch = Math.cos(n.heading), sh = Math.sin(n.heading);
+  if (n.tail) {
+    const wx = wind.dir.x * windStrength - n.vel.x * 0.15, wz = wind.dir.y * windStrength - n.vel.y * 0.15;
+    const lzW = wx * sh + wz * ch, lxW = wx * ch - wz * sh;
+    n.tail.rotation.x = 0.2 - lzW * 0.6 + Math.abs(Math.sin(n.walkPhase)) * 0.15 * swing;
+    n.tail.rotation.z = lxW * 0.6 + Math.sin(n.walkPhase) * 0.1 * swing;
+  }
+  // Top bu arkadaştaysa: iki elin arasında ya da sağ elinin altında sekiyor
+  if (hasBall) {
+    n.root.updateMatrixWorld(true);
+    n.handL.getWorldPosition(_hl);
+    n.handR.getWorldPosition(_hr);
+    _ball.addVectors(_hl, _hr).multiplyScalar(0.5);
+    _ball.x += sh * 0.02; _ball.z += ch * 0.02;
+    if (n.dribbleK > 0.001) {
+      const prev = n.dribblePhase;
+      n.dribblePhase = (n.dribblePhase + dt * (1.7 + runAmt * 1.5)) % 1;
+      if (prev < 0.5 && n.dribblePhase >= 0.5 && n.dribbleK > 0.5 && distXZ(n.pos, player.pos) < 25) playBounce(0.14, 150);
+      const top = _hr.y - (0.065 * n.scale + BALL_R);
+      const y = BALL_R + (top - BALL_R) * Math.abs(Math.cos(Math.PI * n.dribblePhase));
+      _v1.set(_hr.x + sh * 0.08 - ch * 0.07, y, _hr.z + ch * 0.08 + sh * 0.07);
+      _ball.lerp(_v1, n.dribbleK);
+      _v3.set(ch, 0, -sh);
+      ballMesh.rotateOnWorldAxis(_v3, dt * (6 + sp));
+    }
+    ball.pos.copy(_ball);
+  }
+}
+
+// İsim etiketleri ve konuşma balonları karakterlerin başının üstünde dursun
+const _tagV = new THREE.Vector3();
+function updateNpcTags() {
+  for (const n of npcs) {
+    _tagV.set(n.pos.x, 2.12 * n.scale, n.pos.z);
+    const d = camera.position.distanceTo(_tagV);
+    _tagV.project(camera);
+    const vis = started && _tagV.z < 1 && d < 45 && Math.abs(_tagV.x) < 1.15 && Math.abs(_tagV.y) < 1.15;
+    n.tag.style.display = vis ? 'block' : 'none';
+    if (n.sayUntil && time > n.sayUntil) { n.sayEl.classList.remove('show'); n.sayUntil = 0; }
+    if (!vis) continue;
+    n.tag.style.left = `${(_tagV.x * 0.5 + 0.5) * window.innerWidth}px`;
+    n.tag.style.top = `${(-_tagV.y * 0.5 + 0.5) * window.innerHeight}px`;
+  }
+}
+touchButton('btnPass', () => passOrRequest());
+const btnPass = document.getElementById('btnPass');
+
+/* =====================================================================
    ANA DÖNGÜ
    ===================================================================== */
 const clock = new THREE.Clock();
@@ -3110,7 +3630,9 @@ function tick(dt) {
   updateWind(dt);
   updatePlayer(dt);
   if (ball.state === 'thrown') updateBallPhysics(dt);
+  else if (ball.state === 'pass') updatePass(dt);
   animateCharacter(dt);
+  updateNPCs(dt);
   updateAccessories();
   updateLounge(dt);
   updateTrees();
