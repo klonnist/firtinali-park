@@ -2,7 +2,10 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#2a3340">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>Fırtınalı Park</title>
 <style>
   :root {
@@ -102,6 +105,62 @@
     #help b { min-width: 70px; }
     #windbox { width: 150px; }
   }
+
+  /* ---------- Dokunmatik kontroller (mobil) ---------- */
+  html, body { touch-action: none; -webkit-touch-callout: none; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  #touch { display: none; }
+  .touch-hint { display: none; }
+  body.touch #help { display: none; }
+  body.touch #touch { display: block; }
+  body.touch .touch-hint { display: block; }
+  body.touch .key-hint { display: none; }
+  body.touch #scorebox { left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top)); padding: 8px 11px; font-size: 12px; }
+  body.touch #scorebox .big { font-size: 15px; }
+  body.touch #topright { right: max(12px, env(safe-area-inset-right)); top: max(12px, env(safe-area-inset-top)); }
+  body.touch #windbox { width: 140px; padding: 8px 10px; }
+  body.touch .btns button { padding: 8px 10px; font-size: 12px; }
+  body.touch #toast { font-size: 17px; top: 18%; }
+
+  #joy {
+    position: absolute; pointer-events: auto; touch-action: none;
+    left: max(18px, env(safe-area-inset-left)); bottom: max(22px, env(safe-area-inset-bottom));
+    width: 132px; height: 132px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.10), rgba(255,255,255,0.04));
+    border: 2px solid rgba(255,255,255,0.22);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  #joyKnob {
+    position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px;
+    border-radius: 50%; background: rgba(255,255,255,0.55); border: 2px solid rgba(255,255,255,0.8);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3); transition: background 0.15s;
+  }
+  #joy.run #joyKnob { background: rgba(255,150,80,0.85); }
+  #joyLabel {
+    position: absolute; left: 0; right: 0; bottom: -20px; text-align: center;
+    font-size: 11px; color: var(--muted); pointer-events: none;
+  }
+  .tbtn {
+    position: absolute; pointer-events: auto; touch-action: none;
+    width: 74px; height: 74px; border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+    font: inherit; font-size: 12px; font-weight: 700; color: #fff;
+    background: rgba(14, 20, 30, 0.5); border: 2px solid rgba(255,255,255,0.28);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    user-select: none; -webkit-user-select: none;
+  }
+  .tbtn .ic { font-size: 24px; line-height: 1; }
+  .tbtn.active { background: rgba(255, 138, 61, 0.6); transform: scale(0.94); }
+  #btnJump { right: max(18px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom)); }
+  #btnThrow { right: calc(max(18px, env(safe-area-inset-right)) + 88px); bottom: calc(max(22px, env(safe-area-inset-bottom)) + 22px); }
+  #btnThrow.ready { border-color: #ffb070; box-shadow: 0 0 18px rgba(255, 138, 61, 0.55); }
+  @media (max-height: 420px) {               /* yatay telefon */
+    #joy { width: 112px; height: 112px; }
+    .tbtn { width: 64px; height: 64px; }
+    #btnThrow { right: calc(max(18px, env(safe-area-inset-right)) + 76px); }
+    body.touch #windbox { display: none; }
+    #start h1 { margin: 8px 0 6px; }
+    #start p { margin-bottom: 14px; font-size: 15px; }
+  }
 </style>
 
 <!-- Three.js'i importmap ile jsDelivr CDN'den yüklüyoruz -->
@@ -124,7 +183,8 @@
     <h1>Fırtınalı Park</h1>
     <p>Rüzgar ağaçları savuruyor, uzakta şimşekler çakıyor. Basketbol topunu kap, parkta dolaş ve potaya birkaç atış yap.</p>
     <button id="startBtn" disabled>Yükleniyor…</button>
-    <div class="hint">🎧 Sesli deneyim · Yön tuşları / WASD ile gez</div>
+    <div class="hint key-hint">🎧 Sesli deneyim · Yön tuşları / WASD ile gez</div>
+    <div class="hint touch-hint">🎧 Sesli deneyim · Sol joystick ile yürü, ekranı sürükleyerek bak, iki parmakla yakınlaş</div>
     <div id="loadError">Three.js yüklenemedi. İnternet bağlantını kontrol et ve sayfayı yerel bir sunucu üzerinden aç.</div>
   </div>
 </div>
@@ -161,10 +221,20 @@
     <div><b>🖱️ Tekerlek</b> <span>Yakınlaştır</span></div>
   </div>
   <div id="toast"></div>
+  <!-- Dokunmatik kontroller -->
+  <div id="touch">
+    <div id="joy"><div id="joyKnob"></div><div id="joyLabel">Sona it: koş</div></div>
+    <button class="tbtn" id="btnThrow"><span class="ic">🏀</span>At</button>
+    <button class="tbtn" id="btnJump"><span class="ic">⤒</span>Zıpla</button>
+  </div>
 </div>
 
 <!-- CDN yüklenemezse kullanıcıya haber ver -->
 <script>
+  // Dokunmatik cihazda mobil arayüzü hemen aç (başlangıç ekranı ipucu dahil)
+  if (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 && !window.matchMedia('(pointer: fine)').matches) {
+    document.body.classList.add('touch');
+  }
   setTimeout(function () {
     if (!window.__parkReady) document.getElementById('loadError').style.display = 'block';
   }, 15000);
@@ -201,13 +271,16 @@ function lerpAngle(a, b, t) {
 // Kare-hızdan bağımsız yumuşatma katsayısı
 const damp = (rate, dt) => 1 - Math.exp(-rate * dt);
 
-const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const isTouch = document.body.classList.contains('touch');
+// iPadOS kendini Mac olarak tanıtır -> dokunma noktası sayısıyla yakala
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
 /* =====================================================================
    SAHNE / IŞIK
    ===================================================================== */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));   // telefonda GPU'yu yorma
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -236,7 +309,7 @@ const SUN_BASE = 1.5;
 const SUN_OFFSET = new THREE.Vector3(28, 45, 18);
 const sun = new THREE.DirectionalLight(0xd0d8ea, SUN_BASE);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.setScalar(isMobile ? 1024 : 2048);
 Object.assign(sun.shadow.camera, { left: -35, right: 35, top: 35, bottom: -35, near: 1, far: 140 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.03;
@@ -594,7 +667,7 @@ function updateTrees() {
    ÇİMENLER (InstancedMesh + rüzgar vertex shader)
    ===================================================================== */
 (function buildGrass() {
-  const COUNT = isMobile ? 18000 : 42000;
+  const COUNT = isMobile ? 16000 : 42000;
   const geo = new THREE.PlaneGeometry(0.1, 1, 1, 4);
   geo.translate(0, 0.5, 0);
   const pos = geo.attributes.position, nrm = geo.attributes.normal;
@@ -927,10 +1000,17 @@ function updatePlayer(dt) {
     if (keys.ArrowRight || keys.KeyD) ix += 1;
     if (keys.ArrowLeft || keys.KeyA) ix -= 1;
   }
-  const running = keys.ShiftLeft || keys.ShiftRight;
+  // Dokunmatik joystick: analog hız, sona kadar itilince koşu
+  let speedScale = 1, joyRun = false;
+  if (started && joy.active && joy.mag > 0.12) {
+    ix = joy.x; iz = -joy.y;
+    speedScale = clamp((joy.mag - 0.12) / 0.6, 0.25, 1);
+    joyRun = joy.mag > 0.9;
+  }
+  const running = keys.ShiftLeft || keys.ShiftRight || joyRun;
   let dx = fx * iz + rx * ix, dz = fz * iz + rz * ix;
   const len = Math.hypot(dx, dz);
-  const maxSpeed = running ? RUN_SPEED : WALK_SPEED;
+  const maxSpeed = (running ? RUN_SPEED : WALK_SPEED) * speedScale;
   if (len > 0) { dx = dx / len * maxSpeed; dz = dz / len * maxSpeed; }
   // İvmeli hızlanma / yavaşlama (havada daha az kontrol)
   const rate = (player.grounded ? (len > 0 ? 6 : 9) : 1.5);
@@ -1248,24 +1328,98 @@ const cam = {
   base: new THREE.Vector3(0, 4, 8),
   shake: 0,
 };
-let dragging = false, lastX = 0, lastY = 0, lastDragTime = -10;
-
+let dragging = false, lastDragTime = -10;
+// Fare + dokunma: tek parmak/fare = döndür, iki parmak = yakınlaştır (pinch)
+const camPointers = new Map();
+let pinchDist = 0;
+function pinchSpan() {
+  const [a, b] = [...camPointers.values()];
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
 canvas.addEventListener('pointerdown', (e) => {
   if (!started) return;
-  dragging = true; lastX = e.clientX; lastY = e.clientY;
-  canvas.setPointerCapture(e.pointerId);
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* bazı tarayıcılarda olmayabilir */ }
+  camPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (camPointers.size === 2) pinchDist = pinchSpan();
+  dragging = true;
   canvas.style.cursor = 'grabbing';
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (!dragging) return;
-  cam.yaw -= (e.clientX - lastX) * 0.005;
-  cam.pitch = clamp(cam.pitch + (e.clientY - lastY) * 0.004, 0.05, 1.25);
-  lastX = e.clientX; lastY = e.clientY;
+  const p = camPointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (camPointers.size >= 2) {
+    const span = pinchSpan();
+    if (pinchDist > 0 && span > 0) cam.targetDist = clamp(cam.targetDist * pinchDist / span, 3, 16);
+    pinchDist = span;
+  } else {
+    const sens = e.pointerType === 'touch' ? 0.007 : 0.005;
+    cam.yaw -= dx * sens;
+    cam.pitch = clamp(cam.pitch + dy * sens * 0.8, 0.05, 1.25);
+  }
   lastDragTime = time;
 });
-const endDrag = () => { dragging = false; canvas.style.cursor = 'grab'; };
+const endDrag = (e) => {
+  camPointers.delete(e.pointerId);
+  pinchDist = camPointers.size === 2 ? pinchSpan() : 0;
+  if (camPointers.size === 0) { dragging = false; canvas.style.cursor = 'grab'; }
+};
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ---------- Sanal joystick (mobil) ----------
+const joy = { active: false, id: null, x: 0, y: 0, mag: 0, cx: 0, cy: 0 };
+const joyEl = document.getElementById('joy');
+const joyKnob = document.getElementById('joyKnob');
+const JOY_R = 50;                                   // topuzun gidebileceği en uzak mesafe (px)
+function joyMove(e) {
+  let dx = e.clientX - joy.cx, dy = e.clientY - joy.cy;
+  const d = Math.hypot(dx, dy);
+  if (d > JOY_R) { dx = dx / d * JOY_R; dy = dy / d * JOY_R; }
+  joy.x = dx / JOY_R; joy.y = dy / JOY_R;
+  joy.mag = Math.min(1, d / JOY_R);
+  joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joyEl.classList.toggle('run', joy.mag > 0.9);
+}
+joyEl.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (joy.active) return;
+  const r = joyEl.getBoundingClientRect();
+  joy.cx = r.left + r.width / 2; joy.cy = r.top + r.height / 2;
+  joy.active = true; joy.id = e.pointerId;
+  try { joyEl.setPointerCapture(e.pointerId); } catch (_) { /* bazı tarayıcılarda olmayabilir */ }
+  joyMove(e);
+});
+joyEl.addEventListener('pointermove', (e) => { if (joy.active && e.pointerId === joy.id) joyMove(e); });
+const joyEnd = (e) => {
+  if (e.pointerId !== joy.id) return;
+  joy.active = false; joy.id = null; joy.x = joy.y = joy.mag = 0;
+  joyKnob.style.transform = '';
+  joyEl.classList.remove('run');
+};
+joyEl.addEventListener('pointerup', joyEnd);
+joyEl.addEventListener('pointercancel', joyEnd);
+joyEl.addEventListener('lostpointercapture', joyEnd);
+
+// ---------- Dokunmatik butonlar ----------
+function touchButton(id, action) {
+  const el = document.getElementById(id);
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    el.classList.add('active');
+    if (started) action();
+  });
+  const up = () => el.classList.remove('active');
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('pointerleave', up);
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+touchButton('btnJump', () => { jumpRequest = true; });
+touchButton('btnThrow', () => throwBall());
+const btnThrow = document.getElementById('btnThrow');
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   cam.targetDist = clamp(cam.targetDist * (1 + clamp(e.deltaY, -200, 200) * 0.0012), 3, 16);
@@ -1758,6 +1912,10 @@ startBtn.addEventListener('click', () => {
   if (started) return;
   initAudio();                                    // ses yalnızca kullanıcı etkileşimiyle başlar
   if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume();
+  // Mobilde tam ekran (desteklenmiyorsa sessizce geç; iPhone Safari desteklemez)
+  if (isTouch && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+  }
   started = true;
   startEl.classList.add('gone');
   hudEl.classList.remove('hidden');
@@ -1781,8 +1939,16 @@ function updateHUD(dt) {
   const ang = Math.atan2(wind.dir.x * rx + wind.dir.y * rz, wind.dir.x * fx + wind.dir.y * fz);
   windArrow.style.transform = `rotate(${ang}rad)`;
   const hd = Math.hypot(RIM_WORLD.x - player.pos.x, RIM_WORLD.z - player.pos.z);
-  hoopDistEl.textContent = `${hd.toFixed(1)} m${hd <= 16 ? ' · F ile at!' : ''}`;
+  const canThrow = hd <= 16 && ball.state === 'held';
+  hoopDistEl.textContent = `${hd.toFixed(1)} m${canThrow ? (isTouch ? ' · At!' : ' · F ile at!') : ''}`;
+  btnThrow.classList.toggle('ready', canThrow);
 }
+
+// Sekme/uygulama arka plana geçince sesi durdur, dönünce devam et
+document.addEventListener('visibilitychange', () => {
+  if (!audio.ctx) return;
+  if (document.hidden) audio.ctx.suspend(); else audio.ctx.resume();
+});
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
