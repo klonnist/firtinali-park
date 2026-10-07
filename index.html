@@ -303,7 +303,7 @@
     <div><b><kbd>Space</kbd></b> <span>Zıpla</span></div>
     <div><b><kbd>F</kbd></b> <span>Potaya at</span></div>
     <div><b><kbd>P</kbd></b> <span>Pas ver / topu iste</span></div>
-    <div><b><kbd>E</kbd></b> <span>Otur · Ye · İç · Topla</span></div>
+    <div><b><kbd>E</kbd></b> <span>Otur · Ye · Topla · Bin</span></div>
     <div><b><kbd>R</kbd> / <kbd>M</kbd></b> <span>Yağmur / Ses</span></div>
     <div><b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b> <span>Fırtına / Güneş / Kar</span></div>
     <div><b>🖱️ Sürükle</b> <span>Kamerayı döndür</span></div>
@@ -664,6 +664,9 @@ const LOUNGE = { cx: -22, cz: -10, hx: 4.5, hz: 3.5, h: 3 };
 const GARDEN = { cx: -22, cz: -1.2, hx: 5, hz: 3.6 };
 const CARROT_BED = { cx: -20.2, cz: 0.9, hx: 1.25, hz: 0.65 };
 const BASKET_HOME = new THREE.Vector3(-15.6, 0, -3.3);    // bahçe girişindeki sepet sehpası
+// Oyun alanı (salıncak, tahterevalli, kaydırak) ve fıskiyeli süs havuzu
+const PLAY = { cx: 15, cz: 6, hx: 6, hz: 4.5 };
+const POND = { cx: -8, cz: 10, r: 3.2 };
 
 function makeCourtTexture() {
   const PX = 40, W = COURT.hx * 2 * PX, H = COURT.hz * 2 * PX;
@@ -848,6 +851,13 @@ function createTree(x, z, isPine) {
     if (Math.abs(x) > 94 || Math.abs(z) > 94) continue;
     // Boş kalacak alanlar: başlangıç noktası, saha, dinlenme odası ve aralarındaki yol
     if (Math.hypot(x, z) < 12 || inRect(x, z, COURT, 3.5) || inRect(x, z, LOUNGE, 4.5) || inRect(x, z, GARDEN, 4)) continue;
+    if (inRect(x, z, PLAY, 3.5) || Math.hypot(x - POND.cx, z - POND.cz) < POND.r + 4.5) continue;
+    // Saha kapısından oyun alanına giden yol (arkadaş tahterevalliye gelirken)
+    {
+      const ax = COURT.cx, az = COURT.cz + COURT.hz + 1.3, bx = PLAY.cx + 1.2, bz = PLAY.cz - 1.8;
+      const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2), 0, 1);
+      if (Math.hypot(x - (ax + (bx - ax) * t), z - (az + (bz - az) * t)) < 3.5) continue;
+    }
     if (x > LOUNGE.cx && x < 2 && Math.abs(z - LOUNGE.cz * (x / LOUNGE.cx)) < 4) continue;
     // Saha kapısından odanın kapısına giden yol (arkadaşlar mola için bu yoldan yürür)
     {
@@ -942,6 +952,7 @@ function updateTrees() {
   while (i < COUNT) {
     const x = (Math.random() * 2 - 1) * 98, z = (Math.random() * 2 - 1) * 98;
     if (inRect(x, z, COURT, 0.1) || inRect(x, z, LOUNGE, 0.3) || inRect(x, z, CARROT_BED, 0.05)) continue;   // saha, oda ve tarhta ot olmasın
+    if (inRect(x, z, PLAY, 0.1) || Math.hypot(x - POND.cx, z - POND.cz) < POND.r + 0.5) continue;           // oyun alanı ve havuz
     e.set((Math.random() - 0.5) * 0.3, Math.random() * Math.PI, (Math.random() - 0.5) * 0.3);
     m.compose(p.set(x, 0, z), q.setFromEuler(e), s.set(0.8 + Math.random() * 0.8, 0.3 + Math.random() * 0.55, 1));
     mesh.setMatrixAt(i, m);
@@ -1806,6 +1817,382 @@ function updateGarden(dt) {
   }
 }
 
+/* =====================================================================
+   OYUN ALANI (salıncak, tahterevalli, kaydırak) + FISKİYELİ SÜS HAVUZU
+   ===================================================================== */
+const SWING_L = 2.1;                     // salıncak zincir boyu
+const swings = [];                       // { pivot, group, angle, vel, rider }
+const seesaw = { pivot: new THREE.Vector3(PLAY.cx + 3.2, 0.6, PLAY.cz - 2.4), plank: null, angle: -0.28 };
+const SLIDE = {
+  ladder: new THREE.Vector3(PLAY.cx - 1.75, 0, PLAY.cz + 2.6),
+  top: new THREE.Vector3(PLAY.cx - 0.7, 1.6, PLAY.cz + 2.6),
+  chuteA: new THREE.Vector3(PLAY.cx - 0.25, 1.55, PLAY.cz + 2.6),
+  chuteB: new THREE.Vector3(PLAY.cx + 2.7, 0.3, PLAY.cz + 2.6),
+  exit: new THREE.Vector3(PLAY.cx + 3.4, 0, PLAY.cz + 2.6),
+};
+(function buildPlayground() {
+  const { cx, cz, hx, hz } = PLAY;
+  const L = (c, o = {}) => new THREE.MeshLambertMaterial({ color: c, ...o });
+  const S = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.3, ...o });
+  const add = (geo, mat, x, y, z, parent = scene) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  };
+  // Renkli kauçuk zemin
+  {
+    const PX = 40, c = document.createElement('canvas');
+    c.width = hx * 2 * PX; c.height = hz * 2 * PX;
+    const g = c.getContext('2d');
+    const cols = ['#3d8fd1', '#4cb06a', '#f2a23a', '#e85d5d'];
+    for (let y = 0; y < c.height; y += PX) for (let x = 0; x < c.width; x += PX) {
+      g.fillStyle = cols[((x / PX) * 3 + (y / PX) * 5 + ((x * y) % 7)) % 4];
+      g.fillRect(x, y, PX, PX);
+      g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2;
+      g.strokeRect(x + 1, y + 1, PX - 2, PX - 2);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const geo = new THREE.PlaneGeometry(hx * 2, hz * 2);
+    geo.rotateX(-Math.PI / 2);
+    const floor = new THREE.Mesh(geo, addSnowCover(L(0xffffff, { map: tex }), 0.85));
+    floor.position.set(cx, 0.014, cz);
+    floor.receiveShadow = true;
+    scene.add(floor);
+    const edge = L(0xf2c230);
+    for (const s of [-1, 1]) {
+      add(new THREE.BoxGeometry(hx * 2 + 0.2, 0.12, 0.1), edge, cx, 0.06, cz + s * (hz + 0.05));
+      add(new THREE.BoxGeometry(0.1, 0.12, hz * 2), edge, cx + s * (hx + 0.05), 0.06, cz);
+    }
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 1.8), makeSign('🎠 OYUN ALANI', '#e85d5d', '#ffffff'));
+    sign.position.set(cx - hx - 0.3, 1.3, cz);
+    scene.add(sign);
+    add(new THREE.CylinderGeometry(0.05, 0.05, 1.1, 6), L(0x8a5a3b), cx - hx - 0.3, 0.55, cz);
+  }
+  const red = S(0xd94141), yellow = S(0xf2c230), blue = S(0x3d7fd9), orange = S(0xf28c28);
+  const chainMat = S(0xa7b0ba, { metalness: 0.8, roughness: 0.35 });
+  // 🎠 Salıncak (A çerçeve, iki salıncak, öne-arkaya [z] sallanır)
+  {
+    const swX = cx - 3, swZ = cz - 1.8, topY = 2.6, legLen = Math.hypot(0.9, topY);
+    for (const x of [swX - 1.7, swX + 1.7]) {
+      for (const s of [-1, 1]) {
+        const leg = add(new THREE.CylinderGeometry(0.06, 0.07, legLen, 8), red, x, topY / 2, swZ + s * 0.45);
+        leg.rotation.x = -s * Math.atan(0.9 / topY);
+        colliders.push({ x, z: swZ + s * 0.9, r: 0.1, h: 2.7 });
+      }
+    }
+    const bar = add(new THREE.CylinderGeometry(0.06, 0.06, 3.6, 8), red, swX, topY, swZ);
+    bar.rotation.z = Math.PI / 2;
+    for (const off of [-0.75, 0.75]) {
+      const group = new THREE.Group();
+      group.position.set(swX + off, topY, swZ);
+      for (const s of [-1, 1]) add(new THREE.CylinderGeometry(0.012, 0.012, SWING_L, 4), chainMat, s * 0.22, -SWING_L / 2, 0, group);
+      add(new THREE.BoxGeometry(0.52, 0.05, 0.24), off < 0 ? blue : yellow, 0, -SWING_L, 0, group);
+      scene.add(group);
+      swings.push({ pivot: group.position.clone(), group, angle: 0, vel: 0, rider: false });
+    }
+  }
+  // 🎢 Tahterevalli (x boyunca; +x ucuna oyuncu, -x ucuna arkadaş oturur)
+  {
+    const p = seesaw.pivot;
+    add(new THREE.BoxGeometry(0.3, 0.55, 0.5), yellow, p.x, 0.275, p.z);
+    const plank = new THREE.Group();
+    plank.position.copy(p);
+    add(new THREE.BoxGeometry(3.4, 0.08, 0.3), blue, 0, 0, 0, plank);
+    for (const s of [-1, 1]) {
+      add(new THREE.BoxGeometry(0.36, 0.06, 0.34), red, s * 1.45, 0.07, 0, plank);
+      add(new THREE.CylinderGeometry(0.025, 0.025, 0.34, 6), yellow, s * 1.15, 0.2, 0.1, plank);
+      add(new THREE.CylinderGeometry(0.025, 0.025, 0.34, 6), yellow, s * 1.15, 0.2, -0.1, plank);
+      add(new THREE.CylinderGeometry(0.025, 0.025, 0.22, 6), yellow, s * 1.15, 0.37, 0, plank).rotation.x = Math.PI / 2;
+    }
+    plank.rotation.z = seesaw.angle;
+    scene.add(plank);
+    seesaw.plank = plank;
+    addWall(p.x - 1.75, p.x + 1.75, p.z - 0.2, p.z + 0.2, 1.0);
+  }
+  // 🛝 Kaydırak (merdiven + platform + eğimli oluk)
+  {
+    const t = SLIDE.top;
+    add(new THREE.BoxGeometry(0.9, 0.08, 0.9), yellow, t.x, t.y, t.z);
+    for (const [a, b] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) add(new THREE.CylinderGeometry(0.045, 0.045, t.y, 6), red, t.x + a * 0.4, t.y / 2, t.z + b * 0.4);
+    for (const s of [-1, 1]) {
+      add(new THREE.BoxGeometry(0.9, 0.05, 0.04), red, t.x, t.y + 0.45, t.z + s * 0.43);
+      for (const a of [-1, 1]) add(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 5), red, t.x + a * 0.4, t.y + 0.22, t.z + s * 0.43);
+    }
+    // Merdiven (platformun batısında)
+    const lx = t.x - 0.65;
+    for (const s of [-1, 1]) {
+      const rail = add(new THREE.CylinderGeometry(0.03, 0.03, 1.85, 6), blue, lx - 0.15, 0.85, t.z + s * 0.3);
+      rail.rotation.z = -0.32;
+    }
+    for (let i = 0; i < 5; i++) add(new THREE.BoxGeometry(0.06, 0.04, 0.6), yellow, lx - 0.4 + i * 0.13, 0.25 + i * 0.32, t.z);
+    // Oluk
+    const A = SLIDE.chuteA, B = SLIDE.chuteB;
+    const len = Math.hypot(B.x - A.x, B.y - A.y), ang = Math.atan2(B.y - A.y, B.x - A.x);
+    const chute = new THREE.Group();
+    chute.position.set((A.x + B.x) / 2, (A.y + B.y) / 2, A.z);
+    chute.rotation.z = ang;
+    add(new THREE.BoxGeometry(len, 0.05, 0.6), orange, 0, 0, 0, chute);
+    for (const s of [-1, 1]) add(new THREE.BoxGeometry(len, 0.16, 0.04), orange, 0, 0.08, s * 0.3, chute);
+    scene.add(chute);
+    add(new THREE.BoxGeometry(0.5, 0.05, 0.6), orange, B.x + 0.22, 0.27, B.z);
+    for (const x of [B.x - 0.3, (A.x + B.x) / 2]) add(new THREE.CylinderGeometry(0.04, 0.04, 0.8, 6), red, x, 0.4, B.z);
+    addWall(lx - 0.5, t.x + 0.45, t.z - 0.45, t.z + 0.45, 1.7);
+    addWall(t.x + 0.45, B.x + 0.4, B.z - 0.33, B.z + 0.33, 1.0);
+  }
+})();
+
+// ---------- Süs havuzu ----------
+const pond = { fish: [], pads: [], drops: null, dropPos: null, dropVel: null, crumbs: null, crumbData: [], feedUntil: 0, feedCooldown: 0, feedPoint: new THREE.Vector3() };
+const POND_WATER_Y = 0.33;
+(function buildPond() {
+  const { cx, cz, r: R } = POND;
+  const add = (geo, mat, x, y, z, parent = scene) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  };
+  // Taş dokusu
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#8f8a82'; g.fillRect(0, 0, 256, 64);
+  for (let row = 0; row < 2; row++) for (let i = 0; i < 9; i++) {
+    const v = 150 + Math.random() * 50 | 0;
+    g.fillStyle = `rgb(${v},${v - 4},${v - 10})`;
+    g.fillRect(i * 30 + (row ? 15 : 0) - 15 + 2, row * 32 + 2, 26, 28);
+  }
+  const stoneTex = new THREE.CanvasTexture(c); stoneTex.colorSpace = THREE.SRGBColorSpace;
+  stoneTex.wrapS = THREE.RepeatWrapping; stoneTex.repeat.set(8, 1);
+  const stone = addSnowCover(new THREE.MeshLambertMaterial({ map: stoneTex }), 0.6);
+  const W = 0.45, H = 0.45;
+  const top = new THREE.RingGeometry(R, R + W, 48, 1);
+  top.rotateX(-Math.PI / 2);
+  add(top, stone, cx, H, cz);
+  add(new THREE.CylinderGeometry(R + W, R + W, H, 48, 1, true), stone, cx, H / 2, cz);
+  add(new THREE.CylinderGeometry(R, R, H, 48, 1, true), new THREE.MeshLambertMaterial({ map: stoneTex, side: THREE.BackSide }), cx, H / 2, cz);
+  const floor = new THREE.CircleGeometry(R, 32);
+  floor.rotateX(-Math.PI / 2);
+  add(floor, new THREE.MeshLambertMaterial({ color: 0x3f7a70 }), cx, 0.04, cz);
+  colliders.push({ x: cx, z: cz, r: R + W, h: 0.5 });
+
+  // Su yüzeyi: fıskiyeden yayılan halkalar + hafif dalga; karda buz tutar
+  const waterGeo = new THREE.RingGeometry(0.001, R, 48, 12);
+  waterGeo.rotateX(-Math.PI / 2);
+  const waterMat = new THREE.MeshPhongMaterial({ color: 0x3f9bc4, transparent: true, opacity: 0.55, shininess: 90, specular: 0x99bbcc, depthWrite: false });
+  waterMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = windUniforms.uTime;
+    shader.uniforms.uSnow = windUniforms.uSnow;
+    shader.vertexShader = 'uniform float uTime;\nuniform float uSnow;\nvarying float vRip;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `vec3 transformed = vec3(position);
+       float rr = length(position.xz);
+       float rip = sin(rr * 7.0 - uTime * 4.0) * 0.5 + 0.5;
+       float wv = sin(position.x * 2.3 + uTime * 1.3) * sin(position.z * 2.1 - uTime * 1.1);
+       transformed.y += (rip * 0.022 * smoothstep(3.2, 0.4, rr) + wv * 0.01) * (1.0 - uSnow);
+       vRip = rip * smoothstep(3.2, 0.3, rr);`
+    );
+    shader.fragmentShader = 'uniform float uSnow;\nvarying float vRip;\n' + shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.75, 0.9, 1.0), vRip * 0.25 * (1.0 - uSnow));
+       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.82, 0.9, 0.97), uSnow * 0.85);
+       diffuseColor.a = mix(diffuseColor.a, 0.96, uSnow);`
+    );
+  };
+  const water = new THREE.Mesh(waterGeo, waterMat);
+  water.position.set(cx, POND_WATER_Y, cz);
+  water.renderOrder = 1;
+  scene.add(water);
+
+  // Fıskiye: taş kaide, ortada çanak, tepede meme
+  const fstone = new THREE.MeshLambertMaterial({ map: stoneTex });
+  add(new THREE.CylinderGeometry(0.45, 0.5, 0.5, 20), fstone, cx, 0.25, cz);
+  add(new THREE.CylinderGeometry(0.14, 0.18, 0.55, 12), fstone, cx, 0.75, cz);
+  add(new THREE.CylinderGeometry(0.62, 0.28, 0.2, 24), fstone, cx, 1.05, cz);
+  const bowlWater = new THREE.CircleGeometry(0.56, 20);
+  bowlWater.rotateX(-Math.PI / 2);
+  add(bowlWater, waterMat, cx, 1.13, cz);
+  add(new THREE.CylinderGeometry(0.07, 0.09, 0.35, 10), fstone, cx, 1.32, cz);
+  add(new THREE.SphereGeometry(0.08, 10, 8), fstone, cx, 1.5, cz);
+  colliders.push({ x: cx, z: cz, r: 0.5, h: 1.6 });
+
+  // Fıskiye damlaları (tepe fıskiyesi + çanaktan taşan su)
+  const N = 460;
+  pond.dropPos = new Float32Array(N * 3);
+  pond.dropVel = new Float32Array(N * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pond.dropPos, 3).setUsage(THREE.DynamicDrawUsage));
+  pond.drops = new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.075, map: makeDotTexture(), color: 0xd4ecff, transparent: true, opacity: 0.85, depthWrite: false,
+  }));
+  pond.drops.frustumCulled = false;
+  scene.add(pond.drops);
+  for (let i = 0; i < N; i++) { spawnDrop(i); const age = Math.random() * 0.9; for (let k = 0; k < 3; k++) stepDrop(i, age / 3); }
+
+  // Nilüferler
+  const padMat = new THREE.MeshLambertMaterial({ color: 0x3f9a45, side: THREE.DoubleSide });
+  const flowerMat = new THREE.MeshLambertMaterial({ color: 0xf59ac3 });
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.3 + 0.4, rad = 1.4 + (i % 3) * 0.5;
+    const pad = new THREE.Group();
+    const leaf = new THREE.Mesh(new THREE.CircleGeometry(0.28, 16, 0.3, Math.PI * 2 - 0.6), padMat);
+    leaf.rotation.x = -Math.PI / 2;
+    pad.add(leaf);
+    if (i % 2 === 0) {
+      const f = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.1, 6), flowerMat);
+      f.position.y = 0.05;
+      pad.add(f);
+    }
+    pad.position.set(cx + Math.cos(a) * rad, POND_WATER_Y + 0.01, cz + Math.sin(a) * rad);
+    pad.rotation.y = a * 2;
+    scene.add(pad);
+    pond.pads.push(pad);
+  }
+  // Kırmızı / beyaz balıklar
+  const fishMats = [new THREE.MeshLambertMaterial({ color: 0xff7a1a }), new THREE.MeshLambertMaterial({ color: 0xffffff }), new THREE.MeshLambertMaterial({ color: 0xff4d2e })];
+  for (let i = 0; i < 6; i++) {
+    const fg = new THREE.Group();
+    const mat = fishMats[i % 3];
+    const bodyM = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), mat);
+    bodyM.scale.set(0.6, 0.55, 1.5);
+    fg.add(bodyM);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.12, 4), mat);
+    tail.rotation.x = -Math.PI / 2;
+    tail.position.z = -0.19;
+    fg.add(tail);
+    scene.add(fg);
+    const ang = i / 6 * Math.PI * 2;
+    pond.fish.push({ g: fg, tail, angle: ang, r: 1.1 + (i % 3) * 0.6, speed: (i % 2 ? 1 : -1) * rr(0.25, 0.45), pos: new THREE.Vector3(cx + Math.cos(ang) * 1.5, 0, cz + Math.sin(ang) * 1.5) });
+  }
+  // Balık yemi kırıntıları
+  const cg = new THREE.BufferGeometry();
+  cg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  pond.crumbs = new THREE.Points(cg, new THREE.PointsMaterial({ size: 0.06, color: 0xc89b5a }));
+  pond.crumbs.frustumCulled = false;
+  pond.crumbs.visible = false;
+  scene.add(pond.crumbs);
+  for (let i = 0; i < 16; i++) pond.crumbData.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), alive: false });
+  // Havuz başında bank
+  const benchWood = new THREE.MeshLambertMaterial({ color: 0x9a6a43 }), benchMetal = new THREE.MeshLambertMaterial({ color: 0x3a3f45 });
+  const bz = cz + R + 1.6;
+  add(new THREE.BoxGeometry(1.8, 0.06, 0.45), benchWood, cx, 0.45, bz);
+  add(new THREE.BoxGeometry(1.8, 0.35, 0.05), benchWood, cx, 0.75, bz + 0.22);
+  for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.06, 0.45, 0.45), benchMetal, cx + s * 0.8, 0.22, bz);
+  addWall(cx - 0.95, cx + 0.95, bz - 0.25, bz + 0.27, 0.8);
+})();
+// Fıskiye damlası: 0..319 tepe fıskiyesi, kalanı çanaktan taşan su
+function spawnDrop(i) {
+  const p = pond.dropPos, v = pond.dropVel, j = i * 3, a = Math.random() * Math.PI * 2;
+  if (i < 320) {
+    const s = rr(0.45, 0.95);
+    p[j] = POND.cx; p[j + 1] = 1.55; p[j + 2] = POND.cz;
+    v[j] = Math.cos(a) * s; v[j + 1] = rr(3.6, 4.5); v[j + 2] = Math.sin(a) * s;
+  } else {
+    p[j] = POND.cx + Math.cos(a) * 0.6; p[j + 1] = 1.12; p[j + 2] = POND.cz + Math.sin(a) * 0.6;
+    v[j] = Math.cos(a) * 0.35; v[j + 1] = rr(0, 0.3); v[j + 2] = Math.sin(a) * 0.35;
+  }
+}
+function stepDrop(i, dt) {
+  const p = pond.dropPos, v = pond.dropVel, j = i * 3;
+  v[j + 1] -= 9.8 * dt;
+  p[j] += (v[j] + wind.dir.x * windStrength * 0.8) * dt;
+  p[j + 1] += v[j + 1] * dt;
+  p[j + 2] += (v[j + 2] + wind.dir.y * windStrength * 0.8) * dt;
+  if (p[j + 1] < POND_WATER_Y) spawnDrop(i);
+}
+
+// Balıkları besle: kırıntılar suya düşer, balıklar oraya koşuşur
+function feedFish() {
+  if (time < pond.feedCooldown) { showToast('🐟 Balıklar tok! Biraz sonra tekrar besle'); return; }
+  const dx = player.pos.x - POND.cx, dz = player.pos.z - POND.cz, d = Math.hypot(dx, dz) || 1;
+  pond.feedPoint.set(POND.cx + dx / d * (POND.r - 0.9), POND_WATER_Y + 0.01, POND.cz + dz / d * (POND.r - 0.9));
+  pond.feedUntil = time + 7;
+  pond.feedCooldown = time + 15;
+  player.heading = Math.atan2(-dx, -dz);
+  player.passAnim = 1;
+  pond.crumbs.visible = true;
+  pond.crumbData.forEach((c) => {
+    c.alive = true;
+    c.p.set(player.pos.x - dx / d * 0.5, 1.2, player.pos.z - dz / d * 0.5);
+    const tx = pond.feedPoint.x + rr(-0.35, 0.35), tz = pond.feedPoint.z + rr(-0.35, 0.35);
+    c.v.set((tx - c.p.x) / 0.6, 2.2, (tz - c.p.z) / 0.6);
+  });
+  setTimeout(() => {
+    showToast('🐟 Balıklar yemleri kaptı! Çok mutlular! 💕');
+    energy.stars++;
+    popText('+1 ⭐', '#ffd84a');
+    playChime([784, 988, 1175]);
+  }, 1800);
+}
+
+function updatePlayground(dt) {
+  // Boş salıncaklar rüzgarda hafifçe sallanır (sönümlü sarkaç)
+  for (const s of swings) {
+    if (!s.rider) {
+      const acc = -(9.8 / SWING_L) * Math.sin(s.angle) - 0.8 * s.vel + Math.sin(time * 1.3 + s.pivot.x) * windStrength * 0.4;
+      s.vel += acc * dt;
+      s.angle += s.vel * dt;
+    }
+    s.group.rotation.x = s.angle;
+  }
+  // Tahterevalli boşken bir ucu yerde durur
+  if (!playerOnSeesaw()) seesaw.angle += (-0.28 - seesaw.angle) * damp(3, dt);
+  seesaw.plank.rotation.z = seesaw.angle;
+
+  // Havuz: karda donar, fıskiye durur, balıklar görünmez
+  const frozen = W.snow > 0.5;
+  pond.drops.visible = !frozen;
+  if (!frozen) {
+    for (let i = 0; i < 460; i++) stepDrop(i, dt);
+    pond.drops.geometry.attributes.position.needsUpdate = true;
+  }
+  pond.pads.forEach((p, i) => { p.position.y = POND_WATER_Y + 0.01 + Math.sin(time * 1.5 + i) * 0.008 * (frozen ? 0 : 1); });
+  const feeding = time < pond.feedUntil;
+  pond.fish.forEach((f, i) => {
+    f.g.visible = !frozen;
+    if (frozen) return;
+    let tx, tz, speed;
+    if (feeding) {
+      tx = pond.feedPoint.x + Math.cos(i * 1.3) * 0.25; tz = pond.feedPoint.z + Math.sin(i * 1.3) * 0.25; speed = 1.4;
+    } else {
+      f.angle += f.speed * dt;
+      tx = POND.cx + Math.cos(f.angle) * f.r; tz = POND.cz + Math.sin(f.angle) * f.r; speed = 0.8;
+    }
+    const dx = tx - f.pos.x, dz = tz - f.pos.z, d = Math.hypot(dx, dz);
+    if (d > 0.01) {
+      const st = Math.min(d, speed * dt);
+      f.pos.x += dx / d * st; f.pos.z += dz / d * st;
+      f.g.rotation.y = lerpAngle(f.g.rotation.y, Math.atan2(dx, dz), damp(6, dt));
+    }
+    // Ortadaki fıskiye kaidesinden uzak dur
+    const cx = f.pos.x - POND.cx, cz = f.pos.z - POND.cz, cd = Math.hypot(cx, cz) || 1;
+    if (cd < 0.65) { f.pos.x = POND.cx + cx / cd * 0.65; f.pos.z = POND.cz + cz / cd * 0.65; }
+    f.g.position.set(f.pos.x, 0.25 + Math.sin(time * 2 + i) * 0.02, f.pos.z);
+    f.tail.rotation.y = Math.sin(time * (feeding ? 18 : 10) + i) * 0.5;
+  });
+  // Yem kırıntıları: suya düşer, yüzer, balıklar yiyince kaybolur
+  if (pond.crumbs.visible) {
+    const arr = pond.crumbs.geometry.attributes.position.array;
+    let any = false;
+    pond.crumbData.forEach((c, i) => {
+      if (c.alive) {
+        if (c.p.y > POND_WATER_Y + 0.01) {
+          c.v.y -= 9.8 * dt;
+          c.p.addScaledVector(c.v, dt);
+          if (c.p.y <= POND_WATER_Y + 0.01) { c.p.y = POND_WATER_Y + 0.01; c.v.set(0, 0, 0); }
+        } else if (pond.fish.some(f => Math.hypot(f.pos.x - c.p.x, f.pos.z - c.p.z) < 0.18) || !feeding) c.alive = false;
+        any = any || c.alive;
+      }
+      arr[i * 3] = c.p.x; arr[i * 3 + 1] = c.alive ? c.p.y : -50; arr[i * 3 + 2] = c.p.z;
+    });
+    pond.crumbs.geometry.attributes.position.needsUpdate = true;
+    if (!any) pond.crumbs.visible = false;
+  }
+}
+
 // İçeride mi? (yumuşatılmış 0..1 değer)
 function isIndoors(x, z) {
   return Math.abs(x - LOUNGE.cx) < LOUNGE.hx - 0.05 && Math.abs(z - LOUNGE.cz) < LOUNGE.hz - 0.05;
@@ -1849,6 +2236,7 @@ function part(w, h, d, material, x = 0, y = 0, z = 0, radius = 0) {
 }
 
 const character = new THREE.Group();      // dünya konumu + yön
+character.rotation.order = 'YXZ';         // önce yöne dön, sonra öne/arkaya eğil
 const body = new THREE.Group();           // zıplama/yürüme sekmesi
 character.add(body);
 scene.add(character);
@@ -2066,6 +2454,8 @@ const player = {
   sitting: false, sitK: 0,
   action: null,              // yeme/içme animasyonu: { snack, t, dur, nextBite }
   passAnim: 0,               // göğüs pası animasyonu (1 → 0)
+  ride: null,                // oyun alanı: { kind: 'swing' | 'seesaw' | 'slide', t, ... }
+  tiltX: 0,                  // salıncak/kaydırakta gövdenin öne-arkaya eğimi
   tiredK: 0,                 // 0 = dinç, 1 = çok yorgun
 };
 
@@ -2121,6 +2511,110 @@ function standUp() {
   player.pos.x = SIT_SPOT.x + 0.85;                  // koltuğun önüne kalk
 }
 
+// ---------- Oyun alanı: salıncak, tahterevalli, kaydırak ----------
+function nearestFreeSwing() {
+  let best = -1, bd = 1.3;
+  swings.forEach((s, i) => {
+    const d = Math.hypot(player.pos.x - s.pivot.x, player.pos.z - s.pivot.z);
+    if (!s.rider && d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+const nearSeesaw = () => Math.hypot(player.pos.x - (seesaw.pivot.x + 1.45), player.pos.z - seesaw.pivot.z) < 1.4;
+const nearSlide = () => distXZ(player.pos, SLIDE.ladder) < 1.3;
+// Binerken top kenara bırakılır; inince yanından geçerken otomatik alınır
+function parkBall() {
+  if (ball.state !== 'held') return;
+  ball.state = 'thrown';
+  ball.parked = true;
+  ball.thrower = player;
+  ball.scored = true;
+  ball.throwTime = time - 1;
+  ball.vel.set(0, 0, 0);
+  ball.pos.set(player.pos.x + Math.sin(player.heading + 1.6) * 0.7, BALL_R, player.pos.z + Math.cos(player.heading + 1.6) * 0.7);
+}
+function startRide(kind, idx) {
+  parkBall();
+  player.vel.set(0, 0);
+  if (kind === 'swing') {
+    swings[idx].rider = true;
+    player.ride = { kind, idx, t: 0, amp: Math.min(0.3, Math.abs(swings[idx].angle)), sit: true };
+    showToast('🎠 Wiii! Salıncakta sallanıyorsun');
+  } else if (kind === 'seesaw') {
+    player.ride = { kind, t: 0, sit: true };
+    showToast('🎢 Tahterevalli! Yukarı, aşağı!');
+    callSeesawPartner();
+  } else {
+    player.ride = { kind, t: 0, sit: false };
+  }
+  playChime([523, 659, 784]);
+}
+function endRide() {
+  const r = player.ride;
+  if (!r) return;
+  if (r.kind === 'swing') {
+    const s = swings[r.idx];
+    s.rider = false;
+    player.pos.set(s.pivot.x, 0, s.pivot.z + 1.1);
+  } else if (r.kind === 'seesaw') {
+    player.pos.set(seesaw.pivot.x + 1.45, 0, seesaw.pivot.z + 0.75);
+  } else {
+    player.pos.copy(SLIDE.exit);
+  }
+  player.pos.y = 0;
+  player.tiltX = 0;
+  player.ride = null;
+}
+function updateRide(dt, wantsOff) {
+  const r = player.ride;
+  r.t += dt;
+  if (r.kind === 'swing') {
+    if (wantsOff) { endRide(); return; }
+    const s = swings[r.idx];
+    // Ayakla güç verdikçe salınım genişler
+    r.amp = Math.min(0.75, r.amp + dt * 0.18);
+    const w = Math.sqrt(9.8 / SWING_L);
+    s.angle = r.amp * Math.sin(w * r.t);
+    s.vel = r.amp * w * Math.cos(w * r.t);
+    const c = Math.cos(s.angle), sn = Math.sin(s.angle);
+    const seatY = s.pivot.y - SWING_L * c + 0.03, seatZ = s.pivot.z - SWING_L * sn;
+    // Kalça oturağa gelsin: gövde zincirle birlikte döner
+    player.pos.set(s.pivot.x, seatY - 0.55 * c, seatZ - 0.55 * sn);
+    player.heading = 0;
+    player.tiltX = s.angle;
+  } else if (r.kind === 'seesaw') {
+    if (wantsOff) { endRide(); return; }
+    seesaw.angle = -0.28 * Math.cos(2.0 * r.t);
+    const c = Math.cos(seesaw.angle), sn = Math.sin(seesaw.angle);
+    const p = seesaw.pivot;
+    player.pos.set(p.x + 1.45 * c - 0.08 * sn, p.y + 1.45 * sn + 0.08 * c - 0.55, p.z);
+    player.heading = -Math.PI / 2;
+    player.tiltX = 0;
+  } else {
+    // Kaydırak: tırman (0–1.3 sn) → tepede otur → kay (1 sn) → in
+    const t = r.t;
+    player.heading = Math.PI / 2;
+    if (t < 1.3) {
+      const k = t / 1.3;
+      r.sit = false;
+      player.pos.set(lerp(SLIDE.ladder.x, SLIDE.top.x - 0.1, k), Math.sin(k * Math.PI / 2) * 1.62, SLIDE.ladder.z);
+      player.tiltX = 0;
+    } else if (t < 1.6) {
+      r.sit = true;
+      player.pos.set(SLIDE.chuteA.x - 0.1, SLIDE.top.y + 0.05 - 0.55, SLIDE.top.z);
+      if (!r.cheered) { r.cheered = true; showToast('🛝 Hazır mısın? Wiii!'); }
+    } else if (t < 2.6) {
+      const k = Math.pow((t - 1.6) / 1.0, 1.4);
+      const A = SLIDE.chuteA, B = SLIDE.chuteB;
+      player.pos.set(lerp(A.x, B.x, k), lerp(A.y, B.y, k) + 0.05 - 0.55, A.z);
+      player.tiltX = Math.atan2(A.y - B.y, B.x - A.x);
+    } else {
+      endRide();
+      playChime([784, 659, 523, 784, 1047]);
+    }
+  }
+}
+
 // Şu an yapılabilecek eylem (E tuşu / mobil eylem butonu)
 function nearestSnack() {
   let best = null, bd = 1.5;
@@ -2134,6 +2628,7 @@ function nearestSnack() {
 function currentAction() {
   if (!started || player.action) return null;
   if (player.sitting) return { type: 'stand', icon: '🧍', label: 'Kalk' };
+  if (player.ride) return player.ride.kind === 'slide' ? null : { type: 'unride', icon: '🧍', label: 'İn' };
   if (!player.grounded) return null;
   const indoors = isIndoors(player.pos.x, player.pos.z);
   const nearHome = distXZ(player.pos, BASKET_HOME) < 1.3;
@@ -2160,6 +2655,15 @@ function currentAction() {
   if (nearHome) return { type: 'take', icon: '🧺', label: 'Sepeti al' };
   const tr = nearestTree();
   if (tr) return { type: 'info', icon: '🧺', label: 'Sepet lazım', msg: '🧺 Önce bahçe girişindeki sepeti al!' };
+  // Oyun alanı ve havuz
+  const sw = nearestFreeSwing();
+  if (sw >= 0) return { type: 'ride', kind: 'swing', idx: sw, icon: '🎠', label: 'Salıncağa bin' };
+  if (nearSeesaw()) return { type: 'ride', kind: 'seesaw', icon: '🎢', label: 'Tahterevalliye bin' };
+  if (nearSlide()) return { type: 'ride', kind: 'slide', icon: '🛝', label: 'Kaydıraktan kay' };
+  if (Math.hypot(player.pos.x - POND.cx, player.pos.z - POND.cz) < POND.r + 1.5) {
+    if (W.snow > 0.5) return { type: 'info', icon: '❄️', label: 'Havuz donmuş', msg: '❄️ Havuz donmuş! Balıklar buzun altında uyuyor' };
+    return { type: 'feed', icon: '🐟', label: 'Balıkları besle' };
+  }
   if (!indoors) return null;
   const s = nearestSnack();
   if (s) {
@@ -2181,6 +2685,9 @@ function doAction() {
   else if (a.type === 'unload') unloadBasket();
   else if (a.type === 'pick') startPick(a.tree);
   else if (a.type === 'info') { showToast(a.msg); playChime([440]); }
+  else if (a.type === 'ride') startRide(a.kind, a.idx);
+  else if (a.type === 'unride') endRide();
+  else if (a.type === 'feed') feedFish();
   else startSnack(a.snack);
 }
 function startSnack(s) {
@@ -2287,7 +2794,17 @@ function updatePlayer(dt) {
   const maxSpeed = (running ? RUN_SPEED : WALK_SPEED) * speedScale * (1 - 0.3 * player.tiredK);
   if (len > 0) { dx = dx / len * maxSpeed; dz = dz / len * maxSpeed; }
   // Oturuyorken: hareket tuşu ya da zıplama karakteri kaldırır
-  player.sitK += ((player.sitting ? 1 : 0) - player.sitK) * damp(8, dt);
+  const sitPose = player.sitting || (player.ride && player.ride.sit);
+  player.sitK += ((sitPose ? 1 : 0) - player.sitK) * damp(8, dt);
+  // Salıncak/tahterevalli/kaydırak: hareket tuşu ya da zıplama ile in (kaydırak kendiliğinden biter)
+  if (player.ride) {
+    const off = (len > 0 || jumpRequest) && player.ride.kind !== 'slide';
+    jumpRequest = false;
+    player.vel.set(0, 0);
+    player.speed = 0;
+    updateRide(dt, off);
+    return;
+  }
   // Yerken/içerken kısa süre yerinde durur
   if (player.action) {
     player.vel.set(0, 0); player.speed = 0; jumpRequest = false;
@@ -2367,7 +2884,7 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vect
 const BALL_WIND = 0.5;
 
 function throwBall() {
-  if (ball.state !== 'held' || player.sitting || player.action) return;
+  if (ball.state !== 'held' || player.sitting || player.action || player.ride) return;
   // En yakın potaya at
   const { hoop: target_hoop, dist } = nearestHoop(player.pos.x, player.pos.z);
   const RIM = target_hoop.rim;
@@ -2415,6 +2932,7 @@ function launchShot(start, RIM, dist, thrower, skill) {
   ball.pos.copy(start);
   ball.state = 'thrown';
   ball.npc = null;
+  ball.parked = false;
   ball.thrower = thrower;
   ball.throwTime = time;
   ball.scored = false;
@@ -2521,9 +3039,9 @@ function updateBallPhysics(dt) {
 
   // Karakter yanına gelince topu geri al (kendi şutunda kısa bir bekleme var)
   const pdx = ball.pos.x - player.pos.x, pdz = ball.pos.z - player.pos.z;
-  const near = Math.hypot(pdx, pdz) < 0.85 && ball.pos.y < player.pos.y + 1.6 && !player.sitting && !player.action && !basket.carried;
+  const near = Math.hypot(pdx, pdz) < 0.85 && ball.pos.y < player.pos.y + 1.6 && !player.sitting && !player.action && !basket.carried && !player.ride;
   const wait = ball.thrower === player ? 0.6 : 0.25;
-  if ((near && time - ball.throwTime > wait) || time - ball.throwTime > 15) {
+  if ((near && time - ball.throwTime > wait) || (time - ball.throwTime > 15 && !ball.parked)) {
     if (time - ball.throwTime > 15) showToast('Top geri geldi');
     giveToPlayer();
   }
@@ -2531,6 +3049,7 @@ function updateBallPhysics(dt) {
 function giveToPlayer() {
   ball.state = 'held';
   ball.npc = null;
+  ball.parked = false;
   ball.pickupTime = time;
   ball.dribblePhase = 0;
 }
@@ -2565,6 +3084,7 @@ function setArm(arm, x, z) { arm.rotation.x = x; arm.rotation.z = z; }
 function animateCharacter(dt) {
   character.position.copy(player.pos);
   character.rotation.y = player.heading;
+  character.rotation.x = player.tiltX;              // salıncak/kaydırak eğimi (YXZ: önce yön, sonra eğim)
 
   const sp = player.speed;
   const moveAmt = clamp(sp / WALK_SPEED, 0, 1);
@@ -2652,6 +3172,25 @@ function animateCharacter(dt) {
   }
   // Sepet sol elde: kol hafif önde ve dışarıda sabit
   if (basket.carried) { armL.rotation.x = -0.22 - 0.05 * s * swing; armL.rotation.z = 0.14; }
+  // Oyun alanı pozları
+  const rd = player.ride;
+  if (rd) {
+    if (rd.kind === 'swing') {
+      // Zincirleri tut, ayaklarla güç ver
+      armL.rotation.set(-2.75, 0, -0.1); armR.rotation.set(-2.75, 0, 0.1);
+      const pump = Math.cos(Math.sqrt(9.8 / SWING_L) * rd.t);
+      legL.rotation.x = -1.42 + 0.35 * pump; legR.rotation.x = -1.32 + 0.35 * pump;
+    } else if (rd.kind === 'seesaw') {
+      armL.rotation.set(-1.05, 0, -0.25); armR.rotation.set(-1.05, 0, 0.25);
+    } else if (rd.t < 1.3) {
+      // Merdiven tırmanma: kollar ve bacaklar sırayla
+      const c = Math.sin(rd.t * 10);
+      armL.rotation.set(-2.5 + 0.4 * c, 0, -0.1); armR.rotation.set(-2.5 - 0.4 * c, 0, 0.1);
+      legL.rotation.x = -0.7 * Math.max(0, c); legR.rotation.x = -0.7 * Math.max(0, -c);
+    } else {
+      armL.rotation.set(-2.9, 0, -0.3); armR.rotation.set(-2.9, 0, 0.3);   // "Wiii!"
+    }
+  }
   // Yorgunluk: omuzlar düşer, baş öne eğilir, nefes hızlanır
   const tk = player.tiredK * (1 - sk);
   if (tk > 0.01) {
@@ -3265,7 +3804,13 @@ function initAudio() {
   const g3 = ctx.createGain(); g3.gain.value = 0;
   w3.connect(hp).connect(lp3).connect(g3).connect(master);
   w3.start(0, 2.1);
-  Object.assign(audio, { lp, g1, bp, g2, g3, pan });
+  // Fıskiye şırıltısı (havuza yaklaştıkça duyulur)
+  const w4 = ctx.createBufferSource(); w4.buffer = audio.white; w4.loop = true;
+  const bp4 = ctx.createBiquadFilter(); bp4.type = 'bandpass'; bp4.frequency.value = 1700; bp4.Q.value = 0.7;
+  const g4 = ctx.createGain(); g4.gain.value = 0;
+  w4.connect(bp4).connect(g4).connect(master);
+  w4.start(0, 3.1);
+  Object.assign(audio, { lp, g1, bp, g2, g3, g4, pan });
 }
 
 let lastAudioUpdate = -1;
@@ -3283,6 +3828,8 @@ function updateAudio() {
   audio.bp.frequency.setTargetAtTime(380 + ws * 520 + Math.sin(time * 0.9) * 90, t, 0.2);
   audio.g2.gain.setTargetAtTime(Math.max(0, ws - 0.35) * 0.18, t, 0.2);
   audio.g3.gain.setTargetAtTime(rainActive() ? 0.16 * (1 - 0.5 * ik) : 0, t, 0.4);
+  const fd = clamp(1 - Math.hypot(player.pos.x - POND.cx, player.pos.z - POND.cz) / 20, 0, 1);
+  audio.g4.gain.setTargetAtTime(W.snow > 0.5 ? 0 : 0.1 * fd * fd, t, 0.3);
   // Güneşli havada ara ara kuş cıvıltısı
   if (weather === 'sunny' && W.sunAmt > 0.6 && time > nextChirpAt) {
     playChirp();
@@ -3524,7 +4071,7 @@ function updateHUD(dt) {
   const ang = Math.atan2(wind.dir.x * rx + wind.dir.y * rz, wind.dir.x * fx + wind.dir.y * fz);
   windArrow.style.transform = `rotate(${ang}rad)`;
   const hd = nearestHoop(player.pos.x, player.pos.z).dist;
-  const canThrow = hd <= 16 && ball.state === 'held' && !player.sitting && energy.value >= THROW_COST;
+  const canThrow = hd <= 16 && ball.state === 'held' && !player.sitting && !player.ride && energy.value >= THROW_COST;
   hoopDistEl.textContent = `${hd.toFixed(1)} m${canThrow ? (isTouch ? ' · At!' : ' · F ile at!') : ''}`;
   btnThrow.classList.toggle('ready', canThrow);
   // Yakındaki eylem: masaüstünde "E · ..." ipucu, mobilde değişen eylem butonu
@@ -3536,7 +4083,7 @@ function updateHUD(dt) {
   }
   // Pas: top bendeyse en uygun arkadaşa pas, arkadaştaysa topu iste
   let passLabel = null;
-  if (started && !player.sitting && !player.action) {
+  if (started && !player.sitting && !player.action && !player.ride) {
     if (ball.state === 'held') { const n = bestPassTarget(); if (n) passLabel = { icon: '🤝', label: `Pas: ${n.name}`, short: 'Pas' }; }
     else if (ball.state === 'npc' && distXZ(ball.npc.pos, player.pos) < 25) passLabel = { icon: '🙋', label: 'Topu iste', short: 'İste' };
   }
@@ -3726,7 +4273,7 @@ const otherNpc = (n) => npcs.find(o => o !== n);
 const distXZ = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 // Oyuncu pas almaya hazır mı? (sahaya yakın, oturmuyor/yemiyor)
 function playerReady(n) {
-  return started && !player.sitting && !player.action && player.grounded && !basket.carried &&
+  return started && !player.sitting && !player.action && !player.ride && player.grounded && !basket.carried &&
     distXZ(n.pos, player.pos) < 17 && inCourt(player.pos.x, player.pos.z, -4);
 }
 // Pası yakalayacak noktanın dünyadaki yeri (göğüs hizası, biraz önde)
@@ -3793,6 +4340,7 @@ function updatePass(dt) {
 function giveToNpc(n) {
   ball.state = 'npc';
   ball.npc = n;
+  ball.parked = false;
   ball.vel.set(0, 0, 0);
   n.holdTime = 0;
   n.decideAt = rr(1.3, 2.6);
@@ -3847,7 +4395,7 @@ function bestPassTarget() {
   return best;
 }
 function passOrRequest() {
-  if (!started || player.sitting || player.action) return;
+  if (!started || player.sitting || player.action || player.ride) return;
   if (basket.carried) { showToast('🧺 Önce sepeti bırak, sonra oynarız!'); return; }
   if (ball.state === 'held') {
     const n = bestPassTarget();
@@ -3986,7 +4534,50 @@ function npcStartEating(n, snack, faceTo) {
   n.props[snack.id].visible = true;
   n.props[snack.id].scale.setScalar(1);
 }
+// Tahterevalli arkadaşı: oyuncu binince sahadan gelip karşı uca oturur
+const playerOnSeesaw = () => player.ride && player.ride.kind === 'seesaw';
+function callSeesawPartner() {
+  const free = npcs.filter(n => n.mode === 'play' && !(ball.state === 'npc' && ball.npc === n) &&
+    !(ball.state === 'pass' && ball.pass.to === n));
+  if (!free.length) return;
+  free.sort((a, b) => distXZ(a.pos, player.pos) - distXZ(b.pos, player.pos));
+  const n = free[0];
+  const spot = new THREE.Vector3(seesaw.pivot.x - 2.1, 0, seesaw.pivot.z + 0.6);
+  n.mode = 'break';
+  n.tasks = ['seesaw'];
+  n.stuckT = 0;
+  n.path = [...(inCourt(n.pos.x, n.pos.z) ? [NAV.gateIn, NAV.gateOut] : []), spot].map(v => v.clone());
+  npcSay(n, 'Bekle, ben de geliyorum! 🙌', 2);
+}
+function npcReturnToCourt(n, msg) {
+  n.pos.y = 0;
+  n.mode = 'break';
+  n.tasks = ['return'];
+  n.returnMsg = msg;
+  const spot = supportSpot(n, null);
+  n.path = (inCourt(n.pos.x, n.pos.z) ? [spot] : [NAV.gateOut, NAV.gateIn, spot]).map(v => v.clone());
+}
+
 function updateBreak(n, dt) {
+  // Tahterevallide oturuyor: plankla birlikte iner-kalkar
+  if (n.mode === 'seesaw') {
+    if (!playerOnSeesaw()) {
+      n.pos.set(seesaw.pivot.x - 2.1, 0, seesaw.pivot.z + 0.6);
+      npcReturnToCourt(n, 'Çok eğlenceliydi! 😄');
+      return;
+    }
+    const c = Math.cos(seesaw.angle), s = Math.sin(seesaw.angle), p = seesaw.pivot;
+    n.pos.set(p.x - 1.45 * c - 0.08 * s, p.y - 1.45 * s + 0.08 * c - 0.55 * n.scale, p.z);
+    n.heading = Math.PI / 2;
+    n.speed = 0;
+    n.vel.set(0, 0);
+    if (time > n.nextChat) {
+      n.nextChat = time + rr(3, 6);
+      npcSay(n, pick2(['Yukarı! ⬆️', 'Aşağı! ⬇️', 'Hihi, çok eğlenceli! 😄', 'Wiii! 🎢']), 1.5);
+    }
+    return;
+  }
+  if (n.tasks[0] === 'seesaw' && !playerOnSeesaw()) { npcReturnToCourt(n, 'Tamam, sahaya dönüyorum! 🏀'); return; }
   if (n.mode === 'eating') {
     const e = n.eat;
     e.t += dt;
@@ -4036,10 +4627,15 @@ function arriveTask(n) {
       n.tasks.shift();
       planNextTask(n);
     }
+  } else if (task === 'seesaw') {
+    if (playerOnSeesaw()) { n.mode = 'seesaw'; npcSay(n, 'Hazırım! Yukarı, aşağı! 🎢', 2); }
+    else npcReturnToCourt(n, 'Tamam, sahaya dönüyorum! 🏀');
   } else if (task === 'return') {
     n.mode = 'play';
+    n.pos.y = 0;
     n.target.copy(supportSpot(n, null));
-    npcSay(n, 'Enerjim doldu, hadi oynayalım! ⚡', 2);
+    npcSay(n, n.returnMsg || 'Enerjim doldu, hadi oynayalım! ⚡', 2);
+    n.returnMsg = null;
   }
 }
 function askForFruit(n) {
@@ -4115,6 +4711,12 @@ function animateNpc(n, dt, hasBall, receiving) {
     rx = lerp(-0.75, dr, n.dribbleK); rz = lerp(0.24, -0.18, n.dribbleK);
   }
   if (receiving) { lx = -1.25; lz = -0.15; rx = -1.25; rz = 0.15; }
+  // Tahterevallide oturma pozu: bacaklar öne, eller tutamakta
+  if (n.mode === 'seesaw') {
+    n.legL.rotation.x = -1.42; n.legR.rotation.x = -1.32;
+    n.body.position.y = -0.19;
+    lx = rx = -1.05; lz = -0.25; rz = 0.25;
+  }
   if (!hasBall && time < n.callUntil) { rx = -2.9; rz = 0.25 + Math.sin(time * 12) * 0.25; }
   if (n.shootAnim > 0) {
     const k = Math.sin(Math.min(1, n.shootAnim) * Math.PI * 0.5);
@@ -4208,6 +4810,7 @@ function tick(dt) {
   updateAccessories();
   updateLounge(dt);
   updateGarden(dt);
+  updatePlayground(dt);
   updateTrees();
   updateParticles(dt);
   updateRain(dt);
