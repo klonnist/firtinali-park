@@ -300,7 +300,7 @@
     <div><b><kbd>Space</kbd></b> <span>Zıpla</span></div>
     <div><b><kbd>F</kbd></b> <span>Potaya at</span></div>
     <div><b><kbd>P</kbd></b> <span>Pas ver / topu iste</span></div>
-    <div><b><kbd>E</kbd></b> <span>Otur · Ye · İç</span></div>
+    <div><b><kbd>E</kbd></b> <span>Otur · Ye · İç · Topla</span></div>
     <div><b><kbd>R</kbd> / <kbd>M</kbd></b> <span>Yağmur / Ses</span></div>
     <div><b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b> <span>Fırtına / Güneş / Kar</span></div>
     <div><b>🖱️ Sürükle</b> <span>Kamerayı döndür</span></div>
@@ -657,6 +657,10 @@ const GATE_W = 3;
 const RIM_IN = 0.72;                    // çemberin dip çizgiden içeri mesafesi
 // Dinlenme odası: kapısı +X duvarında (başlangıç noktasına bakar)
 const LOUNGE = { cx: -22, cz: -10, hx: 4.5, hz: 3.5, h: 3 };
+// Meyve bahçesi: odanın güneyinde, girişi doğu kenarında
+const GARDEN = { cx: -22, cz: -1.2, hx: 5, hz: 3.6 };
+const CARROT_BED = { cx: -20.2, cz: 0.9, hx: 1.25, hz: 0.65 };
+const BASKET_HOME = new THREE.Vector3(-15.6, 0, -3.3);    // bahçe girişindeki sepet sehpası
 
 function makeCourtTexture() {
   const PX = 40, W = COURT.hx * 2 * PX, H = COURT.hz * 2 * PX;
@@ -840,7 +844,7 @@ function createTree(x, z, isPine) {
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (Math.abs(x) > 94 || Math.abs(z) > 94) continue;
     // Boş kalacak alanlar: başlangıç noktası, saha, dinlenme odası ve aralarındaki yol
-    if (Math.hypot(x, z) < 12 || inRect(x, z, COURT, 3.5) || inRect(x, z, LOUNGE, 4.5)) continue;
+    if (Math.hypot(x, z) < 12 || inRect(x, z, COURT, 3.5) || inRect(x, z, LOUNGE, 4.5) || inRect(x, z, GARDEN, 4)) continue;
     if (x > LOUNGE.cx && x < 2 && Math.abs(z - LOUNGE.cz * (x / LOUNGE.cx)) < 4) continue;
     if (placed.some(t => Math.hypot(x - t.x, z - t.z) < 6)) continue;
     placed.push({ x, z });
@@ -928,7 +932,7 @@ function updateTrees() {
   let i = 0;
   while (i < COUNT) {
     const x = (Math.random() * 2 - 1) * 98, z = (Math.random() * 2 - 1) * 98;
-    if (inRect(x, z, COURT, 0.1) || inRect(x, z, LOUNGE, 0.3)) continue;   // saha ve oda içinde ot olmasın
+    if (inRect(x, z, COURT, 0.1) || inRect(x, z, LOUNGE, 0.3) || inRect(x, z, CARROT_BED, 0.05)) continue;   // saha, oda ve tarhta ot olmasın
     e.set((Math.random() - 0.5) * 0.3, Math.random() * Math.PI, (Math.random() - 0.5) * 0.3);
     m.compose(p.set(x, 0, z), q.setFromEuler(e), s.set(0.8 + Math.random() * 0.8, 0.3 + Math.random() * 0.55, 1));
     mesh.setMatrixAt(i, m);
@@ -1205,33 +1209,47 @@ function makeSnackMesh(id) {
   }
   return g;
 }
-// Tezgâhtaki sunum (kâse, demet, bardak, tabak)
-function makeSnackDisplay(id) {
+// ---------- Stok: tezgâhta her meyveden en fazla STOCK_MAX tane durur ----------
+const STOCK_MAX = 5;
+const stock = { apple: 3, banana: 3, carrot: 3, grapes: 3 };
+// Tezgâhtaki sunum (kâse, demet, bardak, tabak) — stok kadar meyve görünür
+const APPLE_SLOTS = [[-0.07, 0.13, 0.04], [0.08, 0.13, -0.02], [0.01, 0.13, -0.09], [-0.05, 0.13, -0.07], [0, 0.2, 0]];
+function makeSnackDisplay(id, count) {
   const g = new THREE.Group();
   const put = (obj, x, y, z, ry = 0) => { obj.position.set(x, y, z); obj.rotation.y = ry; g.add(obj); return obj; };
   const plate = (r) => put(new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.7, 0.04, 18), snackMats.bowl), 0, 0.02, 0);
   if (id === 'apple') {
     put(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.12, 0.1, 18), snackMats.bowl), 0, 0.05, 0);
-    put(makeSnackMesh('apple'), -0.07, 0.13, 0.04);
-    put(makeSnackMesh('apple'), 0.08, 0.13, -0.02, 1);
-    put(makeSnackMesh('greenApple'), 0, 0.2, 0, 2);
-    put(makeSnackMesh('apple'), 0.01, 0.13, -0.09, 3);
+    for (let i = 0; i < count; i++) put(makeSnackMesh(i === 4 ? 'greenApple' : 'apple'), ...APPLE_SLOTS[i], i);
   } else if (id === 'banana') {
     plate(0.18);
-    for (let i = 0; i < 3; i++) put(makeSnackMesh('banana'), -0.03 + i * 0.03, 0.15, 0, -0.4 + i * 0.4);
+    for (let i = 0; i < count; i++) put(makeSnackMesh('banana'), -0.06 + i * 0.03, 0.15 + (i % 2) * 0.02, 0, -0.6 + i * 0.3);
   } else if (id === 'carrot') {
     put(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.14, 14, 1, true), snackMats.glass), 0, 0.07, 0);
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < count * 2; i++) {
       const c = put(makeSnackMesh('carrot'), Math.cos(i * 0.9) * 0.03, 0.13, Math.sin(i * 0.9) * 0.03);
       c.rotation.set(Math.sin(i) * 0.25, 0, Math.cos(i * 1.3) * 0.25);
     }
   } else if (id === 'grapes') {
     plate(0.17);
-    put(makeSnackMesh('grapes'), -0.05, 0.14, 0, 0.5).rotation.z = 1.3;
-    put(makeSnackMesh('grapes'), 0.06, 0.14, 0.03, 2).rotation.z = 1.2;
+    for (let i = 0; i < count; i++) {
+      const a = i / Math.max(1, count) * Math.PI * 2;
+      put(makeSnackMesh('grapes'), Math.cos(a) * 0.07, 0.14, Math.sin(a) * 0.07, a).rotation.z = 1.25;
+    }
   }
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
+}
+const snackDisplays = {};                          // id -> { group, x, y, z }
+function refreshDisplay(id) {
+  const d = snackDisplays[id];
+  if (d.group) {
+    scene.remove(d.group);
+    d.group.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
+  }
+  d.group = makeSnackDisplay(id, stock[id]);
+  d.group.position.set(d.x, d.y, d.z);
+  scene.add(d.group);
 }
 // Elde tutulan yiyecek/bardak (yeme animasyonunda sağ ele takılır)
 const handProps = {};
@@ -1417,9 +1435,8 @@ const handProps = {};
   addWall(ctrX0, ctrX1, ctrZ - 0.3, z1, ctrH);
   ['apple', 'banana', 'carrot', 'grapes'].forEach((id, i) => {
     const x = ctrX0 + 0.5 + i * 0.9;
-    const disp = makeSnackDisplay(id);
-    disp.position.set(x, ctrH, ctrZ - 0.05);
-    scene.add(disp);
+    snackDisplays[id] = { group: null, x, y: ctrH, z: ctrZ - 0.05 };
+    refreshDisplay(id);
     SNACK_BY_ID[id].pos = new THREE.Vector3(x, 0, ctrZ);
   });
   // Saksı bitkileri
@@ -1485,6 +1502,300 @@ const handProps = {};
   scene.add(lamp);
   lounge.light = lamp;
 })();
+
+/* =====================================================================
+   MEYVE BAHÇESİ: elma ağacı, muz ağacı, asma, havuç tarhı + sepet
+   ===================================================================== */
+const gardenTrees = [];                 // { id, pos, reach, slots: [{ mesh, ready, regrowAt, pop }] }
+const bananaLeaves = [];
+const FRUIT_REGROW = 20;                // toplanan meyve kaç saniyede yeniden büyür
+const basket = { group: null, contents: null, carried: false, fruits: { apple: 0, banana: 0, carrot: 0, grapes: 0 }, total: 0, cap: 8 };
+(function buildGarden() {
+  const { cx, cz, hx, hz } = GARDEN;
+  const x0 = cx - hx, x1 = cx + hx, z0 = cz - hz, z1 = cz + hz;
+  const L = (c, o = {}) => new THREE.MeshLambertMaterial({ color: c, ...o });
+  const wood = L(0x9a6a43), darkWood = L(0x6b4a2e), picketMat = L(0xf3efe6);
+  const add = (geo, mat, x, y, z, parent = scene) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  };
+  const slot = (mesh) => ({ mesh, ready: true, regrowAt: 0, pop: 1 });
+
+  // Alçak beyaz tahta çit (girişi doğu kenarının ortasında)
+  const GATE = 0.95;
+  const segs = [[x0, z0, x1, z0], [x0, z1, x1, z1], [x0, z0, x0, z1], [x1, z0, x1, cz - GATE], [x1, cz + GATE, x1, z1]];
+  const pickets = [];
+  for (const [ax, az, bx, bz] of segs) {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 0.3));
+    for (let i = 0; i <= n; i++) pickets.push([ax + (bx - ax) * i / n, az + (bz - az) * i / n]);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.07, 0.04), picketMat);
+    rail.position.set((ax + bx) / 2, 0.45, (az + bz) / 2);
+    rail.rotation.y = Math.atan2(-(bz - az), bx - ax);
+    scene.add(rail);
+    addWall(Math.min(ax, bx) - 0.06, Math.max(ax, bx) + 0.06, Math.min(az, bz) - 0.06, Math.max(az, bz) + 0.06, 0.75);
+  }
+  const picketMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.08, 0.75, 0.08), picketMat, pickets.length);
+  const m4 = new THREE.Matrix4();
+  pickets.forEach((p, i) => { m4.makeTranslation(p[0], 0.375, p[1]); picketMesh.setMatrixAt(i, m4); });
+  picketMesh.castShadow = true;
+  scene.add(picketMesh);
+  // Giriş kemeri ve tabela
+  for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.12, 1.9, 0.12), wood, x1, 0.95, cz + s * GATE);
+  add(new THREE.BoxGeometry(0.1, 0.1, GATE * 2 + 0.3), wood, x1, 1.88, cz);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 1.9), makeSign('🌳 MEYVE BAHÇESİ', '#4a8a3a', '#ffffff'));
+  sign.position.set(x1 + 0.06, 1.62, cz);
+  scene.add(sign);
+  // Odadan bahçeye basamak taşları
+  const stoneMat = L(0xb7b2a8);
+  for (let i = 0; i < 8; i++) {
+    const t = i / 7;
+    const s = add(new THREE.CylinderGeometry(0.28, 0.3, 0.05, 9), stoneMat, lerp(-16.9, -16.3, t), 0.025, lerp(-9.6, -2.0, t));
+    s.castShadow = false;
+    s.rotation.y = i;
+  }
+
+  // 🍎 Elma ağacı
+  {
+    const tx = -24.8, tz = -2.4;
+    add(new THREE.CylinderGeometry(0.14, 0.2, 1.7, 8), darkWood, tx, 0.85, tz);
+    const crown = add(new THREE.IcosahedronGeometry(1.25, 1), foliageMaterial(0x4f8a35), tx, 2.4, tz);
+    crown.scale.set(1, 0.85, 1);
+    add(new THREE.IcosahedronGeometry(0.8, 1), foliageMaterial(0x5d9a3e), tx + 0.6, 2.9, tz - 0.3);
+    const slots = [];
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2 + 0.3;
+      const ap = makeSnackMesh(i % 4 === 3 ? 'greenApple' : 'apple');
+      ap.position.set(tx + Math.cos(a) * 1.02, 1.82 + (i % 2) * 0.22, tz + Math.sin(a) * 1.02);
+      scene.add(ap);
+      slots.push(slot(ap));
+    }
+    gardenTrees.push({ id: 'apple', pos: new THREE.Vector3(tx, 0, tz), reach: 2.1, slots });
+    colliders.push({ x: tx, z: tz, r: 0.25, h: 2 });
+  }
+  // 🍌 Muz ağacı (geniş sarkık yapraklar + salkım)
+  {
+    const tx = -25.0, tz = 1.0;
+    add(new THREE.CylinderGeometry(0.12, 0.19, 1.95, 8), L(0x7f8f4a), tx, 0.97, tz);
+    const leafMat = L(0x4caf50, { side: THREE.DoubleSide });
+    for (let i = 0; i < 7; i++) {
+      const leaf = new THREE.Group();
+      leaf.position.set(tx, 1.9, tz);
+      leaf.rotation.set(0.55 + (i % 3) * 0.15, i / 7 * Math.PI * 2, 0, 'YXZ');
+      const blade = add(new THREE.BoxGeometry(0.34, 0.02, 1.3), leafMat, 0, 0, 0.65, leaf);
+      blade.scale.x = 1 - (i % 2) * 0.15;
+      scene.add(leaf);
+      bananaLeaves.push(leaf);
+    }
+    add(new THREE.CylinderGeometry(0.02, 0.02, 0.35, 5), L(0x5d6b33), tx + 0.3, 1.62, tz);
+    const slots = [];
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2;
+      const b = makeSnackMesh('banana');
+      b.position.set(tx + 0.3 + Math.cos(a) * 0.09, 1.52 - (i % 2) * 0.1, tz + Math.sin(a) * 0.09);
+      b.rotation.set(0, -a, Math.PI);
+      scene.add(b);
+      slots.push(slot(b));
+    }
+    gardenTrees.push({ id: 'banana', pos: new THREE.Vector3(tx, 0, tz), reach: 2.0, slots });
+    colliders.push({ x: tx, z: tz, r: 0.25, h: 2 });
+  }
+  // 🍇 Asma (çardak + sarkan üzüm salkımları)
+  {
+    const tx = -21.2, tz = -3.5;
+    for (const [px, pz] of [[-1.2, -0.45], [1.2, -0.45], [-1.2, 0.45], [1.2, 0.45]]) {
+      add(new THREE.BoxGeometry(0.1, 2.15, 0.1), wood, tx + px, 1.07, tz + pz);
+      colliders.push({ x: tx + px, z: tz + pz, r: 0.1, h: 2.2 });
+    }
+    for (const pz of [-0.45, 0.45]) add(new THREE.BoxGeometry(2.6, 0.08, 0.08), wood, tx, 2.15, tz + pz);
+    for (let i = 0; i < 6; i++) add(new THREE.BoxGeometry(0.06, 0.06, 1.2), wood, tx - 1.1 + i * 0.44, 2.2, tz);
+    const vine = foliageMaterial(0x4d8f3a);
+    for (let i = 0; i < 6; i++) {
+      const v = add(new THREE.IcosahedronGeometry(0.45, 0), vine, tx - 1.1 + i * 0.44, 2.3, tz + (i % 2 ? 0.2 : -0.2));
+      v.scale.set(1, 0.45, 1.2);
+    }
+    const slots = [];
+    for (let i = 0; i < 6; i++) {
+      const gr = makeSnackMesh('grapes');
+      gr.scale.setScalar(1.6);
+      gr.position.set(tx - 1.0 + i * 0.4, 1.95, tz + (i % 2 ? 0.18 : -0.18));
+      scene.add(gr);
+      slots.push(slot(gr));
+    }
+    gardenTrees.push({ id: 'grapes', pos: new THREE.Vector3(tx, 0, tz), reach: 2.0, slots });
+  }
+  // 🥕 Havuç tarhı (toprakta yeşil yapraklar, turuncu uçlar)
+  {
+    const { cx: bx, cz: bz, hx: bhx, hz: bhz } = CARROT_BED;
+    add(new THREE.BoxGeometry(bhx * 2, 0.16, bhz * 2), L(0x5b3b22), bx, 0.08, bz);
+    for (const s of [-1, 1]) {
+      add(new THREE.BoxGeometry(bhx * 2 + 0.1, 0.22, 0.06), wood, bx, 0.11, bz + s * (bhz + 0.02));
+      add(new THREE.BoxGeometry(0.06, 0.22, bhz * 2), wood, bx + s * (bhx + 0.02), 0.11, bz);
+    }
+    addWall(bx - bhx - 0.05, bx + bhx + 0.05, bz - bhz - 0.05, bz + bhz + 0.05, 0.3);
+    const leaf = L(0x3fa34d), orange = snackMats.carrot;
+    const slots = [];
+    for (let i = 0; i < 6; i++) {
+      const c = new THREE.Group();
+      c.position.set(bx - 0.8 + (i % 3) * 0.8, 0.16, bz + (i < 3 ? -0.3 : 0.3));
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.03, 0.06, 8), orange);
+      top.position.y = 0.02;
+      c.add(top);
+      for (let k = 0; k < 3; k++) {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.01), leaf);
+        l.position.y = 0.14;
+        l.rotation.set(Math.sin(k * 2.1) * 0.35, k * 1.1, Math.cos(k * 2.1) * 0.35);
+        c.add(l);
+      }
+      c.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      scene.add(c);
+      slots.push(slot(c));
+    }
+    gardenTrees.push({ id: 'carrot', pos: new THREE.Vector3(bx, 0, bz), reach: 1.9, slots });
+  }
+
+  // 🧺 Sepet + sehpası (bahçe girişinde)
+  const hx0 = BASKET_HOME.x, hz0 = BASKET_HOME.z;
+  add(new THREE.BoxGeometry(0.62, 0.05, 0.62), wood, hx0, 0.6, hz0);
+  for (const [a, b] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) add(new THREE.BoxGeometry(0.05, 0.6, 0.05), darkWood, hx0 + a * 0.26, 0.3, hz0 + b * 0.26);
+  addWall(hx0 - 0.32, hx0 + 0.32, hz0 - 0.32, hz0 + 0.32, 0.65);
+  {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      g.fillStyle = (x + y) % 2 ? '#b07a3e' : '#8a5a2b';
+      g.fillRect(x * 8, y * 8, 8, 8);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(4, 1);
+    const weave = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+    const bg = new THREE.Group();
+    add(new THREE.CylinderGeometry(0.22, 0.17, 0.2, 16, 1, true), weave, 0, 0.1, 0, bg);
+    add(new THREE.CylinderGeometry(0.17, 0.17, 0.02, 16), weave, 0, 0.01, 0, bg);
+    add(new THREE.TorusGeometry(0.22, 0.02, 6, 20), darkWood, 0, 0.2, 0, bg).rotation.x = Math.PI / 2;
+    add(new THREE.TorusGeometry(0.2, 0.018, 6, 16, Math.PI), darkWood, 0, 0.2, 0, bg);   // sap
+    basket.contents = new THREE.Group();
+    basket.contents.position.y = 0.06;
+    bg.add(basket.contents);
+    bg.position.set(hx0, 0.625, hz0);
+    scene.add(bg);
+    basket.group = bg;
+  }
+})();
+
+// Sepetin içindeki meyveleri çiz (en fazla 8)
+const BASKET_SLOTS = [[0, 0], [0.1, 0], [-0.1, 0], [0, 0.1], [0, -0.1], [0.07, 0.07], [-0.07, -0.07], [0.07, -0.07]];
+function refreshBasket() {
+  const c = basket.contents;
+  while (c.children.length) c.remove(c.children[0]);
+  basket.total = Object.values(basket.fruits).reduce((a, b) => a + b, 0);
+  let i = 0;
+  for (const [id, n] of Object.entries(basket.fruits)) {
+    for (let k = 0; k < n && i < BASKET_SLOTS.length; k++, i++) {
+      const f = makeSnackMesh(id);
+      f.scale.setScalar(0.85);
+      f.position.set(BASKET_SLOTS[i][0], (i > 4 ? 0.07 : 0.02), BASKET_SLOTS[i][1]);
+      f.rotation.y = i * 1.3;
+      c.add(f);
+    }
+  }
+}
+function nearestTree() {
+  let best = null, bd = Infinity;
+  for (const t of gardenTrees) {
+    const d = distXZ(player.pos, t.pos);
+    if (d < t.reach && d < bd) { bd = d; best = t; }
+  }
+  return best;
+}
+const readySlot = (t) => {
+  // Oyuncuya en yakın olgun meyve
+  let best = null, bd = Infinity;
+  for (const s of t.slots) {
+    if (!s.ready) continue;
+    const d = Math.hypot(s.mesh.position.x - player.pos.x, s.mesh.position.z - player.pos.z);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best;
+};
+function takeBasket() {
+  basket.carried = true;
+  handL.add(basket.group);                        // sol elde taşır (sağ el meyve toplar)
+  basket.group.position.set(0, -0.36, 0.03);
+  basket.group.rotation.set(0.2, 0, 0);
+  if (ball.state === 'held') ball.state = 'basket';   // top sepete konur
+  showToast('🧺 Sepeti aldın! Ağaçlardan meyve topla, sonra odadaki tezgâha götür');
+  playChime([523, 659]);
+}
+function dropBasket() {
+  basket.carried = false;
+  scene.add(basket.group);
+  basket.group.position.set(BASKET_HOME.x, 0.625, BASKET_HOME.z);
+  basket.group.rotation.set(0, 0, 0);
+  if (ball.state === 'basket') giveToPlayer();     // top yeniden ele
+}
+function unloadBasket() {
+  let moved = 0, left = 0;
+  for (const id of Object.keys(basket.fruits)) {
+    const put = Math.min(basket.fruits[id], STOCK_MAX - stock[id]);
+    if (put > 0) { stock[id] += put; basket.fruits[id] -= put; moved += put; refreshDisplay(id); }
+    left += basket.fruits[id];
+  }
+  refreshBasket();
+  if (moved > 0) {
+    energy.stars++;
+    showToast('🌱 Stok doldu! Teşekkürler küçük bahçıvan!');
+    popText(`+${moved} 🧺`, '#9cff8a');
+    popText('+1 ⭐', '#ffd84a', 350);
+    playChime([523, 659, 784, 1047, 1319]);
+  } else showToast('Tezgâh zaten dolu! 😊');
+  if (left === 0) {
+    dropBasket();
+    setTimeout(() => showToast('🧺 Sepet bahçedeki yerine kondu'), 1700);
+  } else setTimeout(() => showToast(`Tezgâh doldu, ${left} meyve sepette kaldı 🧺`), 1700);
+}
+function startPick(tree) {
+  const s = readySlot(tree);
+  if (!s) return;
+  player.vel.set(0, 0);
+  player.heading = Math.atan2(s.mesh.position.x - player.pos.x, s.mesh.position.z - player.pos.z);
+  player.action = { kind: 'pick', tree, slot: s, t: 0, dur: 0.8, done: false };
+}
+function playPluck() {
+  const ctx = audio.ctx;
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(500, t);
+  o.frequency.exponentialRampToValueAtTime(1100, t + 0.08);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.2, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g).connect(audio.master);
+  o.start(t); o.stop(t + 0.16);
+}
+let gardenVisited = false;
+function updateGarden(dt) {
+  // Toplanan meyveler zamanla yeniden büyür (küçükten büyüyerek belirir)
+  for (const t of gardenTrees) {
+    for (const s of t.slots) {
+      if (!s.ready && time >= s.regrowAt) { s.ready = true; s.pop = 0; s.mesh.visible = true; }
+      if (s.ready && s.pop < 1) {
+        s.pop = Math.min(1, s.pop + dt * 1.5);
+        s.mesh.scale.setScalar((t.id === 'grapes' ? 1.6 : 1) * smoothstep(s.pop, 0, 1));
+      }
+    }
+  }
+  // Muz yaprakları rüzgarda sallanır
+  bananaLeaves.forEach((l, i) => { l.rotation.z = Math.sin(time * 1.6 + i) * 0.08 * (0.2 + windStrength); });
+  if (!gardenVisited && started && inRect(player.pos.x, player.pos.z, GARDEN, -0.3)) {
+    gardenVisited = true;
+    showToast(basket.carried ? '🌳 Meyve bahçesi! Ağaçların yanında meyve topla' : '🌳 Meyve bahçesi! Girişteki sepeti alıp meyve topla 🧺');
+  }
+}
 
 // İçeride mi? (yumuşatılmış 0..1 değer)
 function isIndoors(x, z) {
@@ -1814,9 +2125,40 @@ function nearestSnack() {
 function currentAction() {
   if (!started || player.action) return null;
   if (player.sitting) return { type: 'stand', icon: '🧍', label: 'Kalk' };
-  if (!player.grounded || !isIndoors(player.pos.x, player.pos.z)) return null;
+  if (!player.grounded) return null;
+  const indoors = isIndoors(player.pos.x, player.pos.z);
+  const nearHome = distXZ(player.pos, BASKET_HOME) < 1.3;
+  // Sepet eldeyken: topla / stoğa koy / bırak
+  if (basket.carried) {
+    if (indoors) {
+      const s = nearestSnack();
+      if (s && !s.drink) {
+        return basket.total > 0
+          ? { type: 'unload', icon: '🧺', label: `Stoğa koy (${basket.total})` }
+          : { type: 'info', icon: '🧺', label: 'Sepet boş', msg: '🧺 Sepet boş! Önce bahçeden meyve topla' };
+      }
+    }
+    if (nearHome) return { type: 'drop', icon: '🧺', label: 'Sepeti bırak' };
+    const tr = nearestTree();
+    if (tr) {
+      const s = SNACK_BY_ID[tr.id];
+      if (basket.total >= basket.cap) return { type: 'info', icon: '🧺', label: 'Sepet dolu', msg: '🧺 Sepet dolu! Odadaki tezgâha götür' };
+      if (!readySlot(tr)) return { type: 'info', icon: '⏳', label: `${s.name} büyüyor`, msg: `⏳ ${s.name} henüz büyüyor, birazdan tekrar gel!` };
+      return { type: 'pick', tree: tr, icon: s.icon, label: `${s.name} topla` };
+    }
+    return null;
+  }
+  if (nearHome) return { type: 'take', icon: '🧺', label: 'Sepeti al' };
+  const tr = nearestTree();
+  if (tr) return { type: 'info', icon: '🧺', label: 'Sepet lazım', msg: '🧺 Önce bahçe girişindeki sepeti al!' };
+  if (!indoors) return null;
   const s = nearestSnack();
-  if (s) return { type: 'snack', snack: s, icon: s.icon, label: `${s.name} ${s.verb}` };
+  if (s) {
+    if (!s.drink && stock[s.id] <= 0) {
+      return { type: 'info', icon: s.icon, label: `${s.name} bitti`, msg: `${s.icon} ${s.name} kalmadı! 🧺 Sepeti al, bahçeden topla` };
+    }
+    return { type: 'snack', snack: s, icon: s.icon, label: s.drink ? `${s.name} ${s.verb}` : `${s.name} ${s.verb} (${stock[s.id]})` };
+  }
   if (canSit()) return { type: 'sit', icon: '🛋️', label: 'Otur' };
   return null;
 }
@@ -1825,12 +2167,24 @@ function doAction() {
   if (!a) return;
   if (a.type === 'stand') standUp();
   else if (a.type === 'sit') toggleSit();
+  else if (a.type === 'take') takeBasket();
+  else if (a.type === 'drop') dropBasket();
+  else if (a.type === 'unload') unloadBasket();
+  else if (a.type === 'pick') startPick(a.tree);
+  else if (a.type === 'info') { showToast(a.msg); playChime([440]); }
   else startSnack(a.snack);
 }
 function startSnack(s) {
+  // Meyveler stoktan düşer (su sınırsız)
+  if (!s.drink) {
+    if (stock[s.id] <= 0) return;
+    stock[s.id]--;
+    refreshDisplay(s.id);
+    if (stock[s.id] === 0) setTimeout(() => showToast(`${s.icon} ${s.name} bitti! Bahçeden toplayabilirsin 🧺`), 2600);
+  }
   player.vel.set(0, 0);
   player.heading = Math.atan2(s.pos.x - player.pos.x, s.pos.z - player.pos.z);   // yiyeceğe dön
-  player.action = { snack: s, t: 0, dur: 1.5, nextBite: 0.35 };
+  player.action = { kind: 'snack', snack: s, t: 0, dur: 1.5, nextBite: 0.35 };
   // Sağ ele yiyeceği/bardağı ver
   if (!handProps[s.id]) {
     handProps[s.id] = makeSnackMesh(s.id);
@@ -1844,6 +2198,23 @@ function startSnack(s) {
 function updateSnackAction(dt) {
   const a = player.action;
   a.t += dt;
+  // Meyve toplama: el uzanır, yarıda meyve sepete geçer
+  if (a.kind === 'pick') {
+    if (!a.done && a.t >= 0.4) {
+      a.done = true;
+      a.slot.ready = false;
+      a.slot.mesh.visible = false;
+      a.slot.regrowAt = time + FRUIT_REGROW;
+      basket.fruits[a.tree.id]++;
+      refreshBasket();
+      const s = SNACK_BY_ID[a.tree.id];
+      popText(`+1 ${s.icon}`, '#ffffff');
+      playPluck();
+      if (basket.total >= basket.cap) setTimeout(() => showToast('🧺 Sepet doldu! Odadaki tezgâha götür'), 500);
+    }
+    if (a.t >= a.dur) player.action = null;
+    return;
+  }
   // Isırık / yudum sesleri
   if (a.t >= a.nextBite && a.t < a.dur - 0.2) {
     if (a.snack.drink) playGulp(); else playCrunch(a.snack.id === 'banana' || a.snack.id === 'grapes');
@@ -2141,7 +2512,7 @@ function updateBallPhysics(dt) {
 
   // Karakter yanına gelince topu geri al (kendi şutunda kısa bir bekleme var)
   const pdx = ball.pos.x - player.pos.x, pdz = ball.pos.z - player.pos.z;
-  const near = Math.hypot(pdx, pdz) < 0.85 && ball.pos.y < player.pos.y + 1.6 && !player.sitting && !player.action;
+  const near = Math.hypot(pdx, pdz) < 0.85 && ball.pos.y < player.pos.y + 1.6 && !player.sitting && !player.action && !basket.carried;
   const wait = ball.thrower === player ? 0.6 : 0.25;
   if ((near && time - ball.throwTime > wait) || time - ball.throwTime > 15) {
     if (time - ball.throwTime > 15) showToast('Top geri geldi');
@@ -2254,7 +2625,15 @@ function animateCharacter(dt) {
   }
   // Yeme/içme: sağ el ağza gider (ısırırken hafif iner-kalkar), top sol kolun altında
   const act = player.action;
-  if (act) {
+  if (act && act.kind === 'pick') {
+    // Meyveye uzan: ağaçta yukarı, havuçta eğilerek aşağı
+    const raise = Math.min(1, act.t / 0.2) * Math.min(1, (act.dur - act.t) / 0.25);
+    const low = act.tree.id === 'carrot';
+    armR.rotation.x = lerp(armR.rotation.x, low ? -0.7 : -2.8, raise);
+    armR.rotation.z = lerp(armR.rotation.z, 0.15, raise);
+    if (low) torso.rotation.x = lerp(torso.rotation.x, 0.6, raise);
+    head.rotation.x = lerp(head.rotation.x, low ? 0.3 : -0.4, raise);
+  } else if (act) {
     const raise = Math.min(1, act.t / 0.25) * Math.min(1, (act.dur - act.t) / 0.25);
     const bite = act.snack.drink ? 0 : Math.sin(act.t * 16) * 0.12;
     armR.rotation.x = lerp(armR.rotation.x, -2.15 + bite, raise);
@@ -2262,6 +2641,8 @@ function animateCharacter(dt) {
     armL.rotation.x = -0.35; armL.rotation.z = 0.12;
     head.rotation.x = lerp(head.rotation.x, act.snack.drink ? -0.3 : 0.06 + bite * 0.3, raise);
   }
+  // Sepet sol elde: kol hafif önde ve dışarıda sabit
+  if (basket.carried) { armL.rotation.x = -0.22 - 0.05 * s * swing; armL.rotation.z = 0.14; }
   // Yorgunluk: omuzlar düşer, baş öne eğilir, nefes hızlanır
   const tk = player.tiredK * (1 - sk);
   if (tk > 0.01) {
@@ -2296,7 +2677,11 @@ function animateCharacter(dt) {
 
   // ---------- Topun konumu ----------
   character.updateMatrixWorld(true);
-  if (ball.state === 'held') {
+  if (ball.state === 'basket') {
+    // Top sepetin içinde, meyvelerin üstünde durur
+    basket.contents.getWorldPosition(ball.pos);
+    ball.pos.y += 0.12 + Math.min(1, basket.total / 5) * 0.06;
+  } else if (ball.state === 'held') {
     handL.getWorldPosition(_hl);
     handR.getWorldPosition(_hr);
     // Tutma: iki elin ortası (yerken/içerken sol elin yanında)
@@ -3329,7 +3714,7 @@ const otherNpc = (n) => npcs.find(o => o !== n);
 const distXZ = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 // Oyuncu pas almaya hazır mı? (sahaya yakın, oturmuyor/yemiyor)
 function playerReady(n) {
-  return started && !player.sitting && !player.action && player.grounded &&
+  return started && !player.sitting && !player.action && player.grounded && !basket.carried &&
     distXZ(n.pos, player.pos) < 17 && inCourt(player.pos.x, player.pos.z, -4);
 }
 // Pası yakalayacak noktanın dünyadaki yeri (göğüs hizası, biraz önde)
@@ -3443,6 +3828,7 @@ function bestPassTarget() {
 }
 function passOrRequest() {
   if (!started || player.sitting || player.action) return;
+  if (basket.carried) { showToast('🧺 Önce sepeti bırak, sonra oynarız!'); return; }
   if (ball.state === 'held') {
     const n = bestPassTarget();
     if (!n) { showToast('🤝 Pas atacak arkadaş yok. Sahadaki Elif ve Can\'ın yanına git!'); return; }
@@ -3635,6 +4021,7 @@ function tick(dt) {
   updateNPCs(dt);
   updateAccessories();
   updateLounge(dt);
+  updateGarden(dt);
   updateTrees();
   updateParticles(dt);
   updateRain(dt);
