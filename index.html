@@ -179,6 +179,9 @@
   /* ---------- Oyun arkadaşlarının isim etiketi ve konuşma balonu ---------- */
   .npc-tag { position: absolute; transform: translate(-50%, -100%); pointer-events: none; text-align: center; display: none; }
   .npc-tag .name { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 800; color: #fff; }
+  .npc-tag .mini { width: 44px; height: 5px; margin: 3px auto 0; border-radius: 3px; background: rgba(0,0,0,0.4); overflow: hidden; }
+  .npc-tag .mini div { height: 100%; width: 100%; background: #6fe07f; transition: width 0.3s linear; }
+  .npc-tag .mini div.low { background: #ff9a4a; }
   .npc-tag .say {
     display: none; position: relative; margin-bottom: 7px; padding: 6px 11px; border-radius: 12px;
     background: #fff; color: #1b2330; font-size: 14px; font-weight: 800; white-space: nowrap;
@@ -846,6 +849,12 @@ function createTree(x, z, isPine) {
     // Boş kalacak alanlar: başlangıç noktası, saha, dinlenme odası ve aralarındaki yol
     if (Math.hypot(x, z) < 12 || inRect(x, z, COURT, 3.5) || inRect(x, z, LOUNGE, 4.5) || inRect(x, z, GARDEN, 4)) continue;
     if (x > LOUNGE.cx && x < 2 && Math.abs(z - LOUNGE.cz * (x / LOUNGE.cx)) < 4) continue;
+    // Saha kapısından odanın kapısına giden yol (arkadaşlar mola için bu yoldan yürür)
+    {
+      const ax = COURT.cx, az = COURT.cz + COURT.hz + 1.3, bx = LOUNGE.cx + LOUNGE.hx + 1, bz = LOUNGE.cz;
+      const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2), 0, 1);
+      if (Math.hypot(x - (ax + (bx - ax) * t), z - (az + (bz - az) * t)) < 3.5) continue;
+    }
     if (placed.some(t => Math.hypot(x - t.x, z - t.z) < 6)) continue;
     placed.push({ x, z });
   }
@@ -3691,7 +3700,7 @@ const npcs = NPC_SPECS.map((spec) => {
   const kid = makeKid(spec);
   const tag = document.createElement('div');
   tag.className = 'npc-tag';
-  tag.innerHTML = `<div class="say"></div><span class="name" style="background:${spec.color}">${spec.name}</span>`;
+  tag.innerHTML = `<div class="say"></div><span class="name" style="background:${spec.color}">${spec.name}</span><div class="mini"><div></div></div>`;
   hudEl.appendChild(tag);
   return {
     ...kid, name: spec.name, scale: spec.scale,
@@ -3700,6 +3709,9 @@ const npcs = NPC_SPECS.map((spec) => {
     walkPhase: Math.random() * 6, holdTime: 0, decideAt: 2, requested: false,
     dribblePhase: 0, dribbleK: 0, shootAnim: 0, passAnim: 0, callUntil: 0, nextChat: rr(2, 5),
     tag, sayEl: tag.querySelector('.say'), sayUntil: 0,
+    energyEl: tag.querySelector('.mini div'),
+    // Mola: oynadıkça enerji azalır, odaya gidip su içer/meyve yer ('play' | 'break' | 'eating')
+    mode: 'play', energy: spec.girl ? 92 : 62, path: [], tasks: [], eat: null, props: {}, stuckT: 0, faceTo: null,
   };
 });
 
@@ -3799,16 +3811,23 @@ function npcShoot(n, hoop, dist) {
   n.shootAnim = 1;
   _v1.set(n.pos.x + Math.sin(n.heading) * 0.25, 2.0 * n.scale, n.pos.z + Math.cos(n.heading) * 0.25);
   launchShot(_v1, hoop.rim, dist, n, 2.2);           // arkadaşlar da bazen kaçırır
+  n.energy = Math.max(0, n.energy - 5);
   if (Math.random() < 0.4) npcSay(n, pick2(['Şut! 🏀', 'Bakın! 👀', 'Hop!']), 1.2);
 }
 // Topu tutan arkadaş ne yapsın? Oyuncu yakındaysa çoğunlukla ona pas verir
 function npcDecide(n) {
   const other = otherNpc(n);
+  const otherOk = other.mode === 'play';
   const pReady = playerReady(n);
   const { hoop, dist } = nearestHoop(n.pos.x, n.pos.z);
+  // Acıkınca topu birine verip molaya çıkar
+  if (n.energy < 30) {
+    if (pReady) return npcPassTo(n, player, 'Al, ben biraz dinleneyim! 💧');
+    if (otherOk) return npcPassTo(n, other, `${other.name}, top sende! Ben mola veriyorum 💧`);
+  }
   const r = Math.random();
   if (pReady && r < 0.55) return npcPassTo(n, player, pick2(['Sıra sende! 🏀', 'Al bakalım!', 'Hadi, at!', 'Senin için! 😊']));
-  if (r < (pReady ? 0.72 : 0.4)) return npcPassTo(n, other, `${other.name}, yakala!`);
+  if (otherOk && r < (pReady ? 0.72 : 0.4)) return npcPassTo(n, other, `${other.name}, yakala!`);
   if (dist > 8) { n.target.copy(shootSpot(n.pos.x, n.pos.z)); n.decideAt = n.holdTime + 1.2; return; }
   npcShoot(n, hoop, dist);
 }
@@ -3818,6 +3837,7 @@ function bestPassTarget() {
   const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);   // ekranda baktığın yön
   let best = null, bs = -Infinity;
   for (const n of npcs) {
+    if (n.mode !== 'play') continue;                 // moladaki arkadaşa pas atılmaz
     const d = distXZ(n.pos, player.pos);
     if (d > 22 || d < 0.8) continue;
     const dot = ((n.pos.x - player.pos.x) * fx + (n.pos.z - player.pos.z) * fz) / d;
@@ -3849,13 +3869,30 @@ function updateNPCs(dt) {
   let chaser = null;
   if (ball.state === 'thrown' && inCourt(ball.pos.x, ball.pos.z, 0.6) && time - ball.throwTime > 0.5) {
     let bd = Infinity;
-    for (const n of npcs) { const d = distXZ(n.pos, ball.pos); if (d < bd) { bd = d; chaser = n; } }
+    for (const n of npcs) {
+      if (n.mode !== 'play') continue;
+      const d = distXZ(n.pos, ball.pos);
+      if (d < bd) { bd = d; chaser = n; }
+    }
     if (inCourt(player.pos.x, player.pos.z) && distXZ(player.pos, ball.pos) < bd - 0.5) chaser = null;
   }
   for (const n of npcs) {
+    // Moladaysa: odaya yürü, su iç, meyve ye, geri dön
+    if (n.mode !== 'play') {
+      updateBreak(n, dt);
+      animateNpc(n, dt, false, false);
+      continue;
+    }
     let run = false;
     const hasBall = ball.state === 'npc' && ball.npc === n;
     const receiving = ball.state === 'pass' && ball.pass.to === n;
+    // Oynadıkça enerji azalır; topsuzken ve sıra uygunsa molaya çıkar
+    if (started) n.energy = Math.max(0, n.energy - dt * 1.0);
+    if (started && n.energy < 30 && !hasBall && !receiving && n !== chaser &&
+        (otherNpc(n).mode === 'play' || n.energy < 10)) {
+      startBreak(n);
+      continue;
+    }
     if (hasBall) {
       n.holdTime += dt;
       if (n.requested && n.holdTime > 0.35) { n.requested = false; npcPassTo(n, player, null); }
@@ -3890,6 +3927,142 @@ function updateNPCs(dt) {
   }
   ballMesh.position.copy(ball.pos);
   updateNpcTags();
+}
+
+// ---------- Mola: sahadan odaya, su + meyve, sonra sahaya dönüş ----------
+const NAV = {
+  gateIn: new THREE.Vector3(COURT.cx, 0, COURT.cz + COURT.hz - 1.0),
+  gateOut: new THREE.Vector3(COURT.cx, 0, COURT.cz + COURT.hz + 1.3),
+  doorOut: new THREE.Vector3(LOUNGE.cx + LOUNGE.hx + 1.0, 0, LOUNGE.cz - 0.15),
+  doorIn: new THREE.Vector3(LOUNGE.cx + LOUNGE.hx - 1.3, 0, LOUNGE.cz - 0.15),
+  hall: new THREE.Vector3(LOUNGE.cx + 1.7, 0, LOUNGE.cz + 2.0),
+};
+const waterSpot = () => { const w = SNACK_BY_ID.water.pos; return new THREE.Vector3(w.x - 0.1, 0, w.z + 0.95); };
+const fruitSpot = (id) => { const p = SNACK_BY_ID[id].pos; return new THREE.Vector3(p.x, 0, p.z - 1.0); };
+const YUMMY = {
+  apple: 'Mmm, elma çok tatlı! 😋', banana: 'Muz enerji verdi! 🍌💪',
+  carrot: 'Kıtır kıtır havuç! 🥕', grapes: 'Üzümler nefis! 🍇',
+};
+
+function startBreak(n) {
+  n.mode = 'break';
+  n.tasks = ['water', 'fruit', 'return'];
+  const route = inCourt(n.pos.x, n.pos.z) ? [NAV.gateIn, NAV.gateOut] : [];
+  n.path = [...route, NAV.doorOut, NAV.doorIn, waterSpot()].map(v => v.clone());
+  n.stuckT = 0;
+  npcSay(n, n.energy < 20 ? 'Acıktım! Bir şeyler yiyeceğim 🍎' : 'Su molası! 💧', 2);
+}
+// Molada yürüme: sahaya kapatılmadan, duvar ve mobilyalardan kaçarak
+function moveNpcFree(n, dt, target) {
+  const dx = target.x - n.pos.x, dz = target.z - n.pos.z, d = Math.hypot(dx, dz);
+  let tx = 0, tz = 0;
+  if (d > 0.1) { const s = Math.min(2.7, d * 3); tx = dx / d * s; tz = dz / d * s; }
+  n.vel.x += (tx - n.vel.x) * damp(6, dt);
+  n.vel.y += (tz - n.vel.y) * damp(6, dt);
+  n.pos.x += n.vel.x * dt;
+  n.pos.z += n.vel.y * dt;
+  for (const o of [player, ...npcs]) {
+    if (o === n) continue;
+    const ox = n.pos.x - o.pos.x, oz = n.pos.z - o.pos.z, od = Math.hypot(ox, oz) || 1e-4;
+    if (od < 0.7) { n.pos.x += ox / od * (0.7 - od); n.pos.z += oz / od * (0.7 - od); }
+  }
+  pushOutOfColliders(n.pos, 0.3, n.vel);
+  pushOutOfWalls(n.pos, 0.3, n.vel, 'y');
+  n.speed = n.vel.length();
+  if (n.speed > 0.3) n.heading = lerpAngle(n.heading, Math.atan2(n.vel.x, n.vel.y), damp(8, dt));
+  return d;
+}
+function npcStartEating(n, snack, faceTo) {
+  n.mode = 'eating';
+  n.eat = { snack, t: 0, dur: 1.6, nextBite: 0.4 };
+  n.faceTo = faceTo;
+  n.vel.set(0, 0);
+  if (!n.props[snack.id]) {
+    const p = makeSnackMesh(snack.id);
+    p.position.set(0, -0.06, 0.07);
+    n.handR.add(p);
+    n.props[snack.id] = p;
+  }
+  n.props[snack.id].visible = true;
+  n.props[snack.id].scale.setScalar(1);
+}
+function updateBreak(n, dt) {
+  if (n.mode === 'eating') {
+    const e = n.eat;
+    e.t += dt;
+    n.speed = 0;
+    n.heading = lerpAngle(n.heading, Math.atan2(n.faceTo.x - n.pos.x, n.faceTo.z - n.pos.z), damp(8, dt));
+    const nearPlayer = distXZ(n.pos, player.pos) < 10;
+    if (e.t >= e.nextBite && e.t < e.dur - 0.2) {
+      if (nearPlayer) { if (e.snack.drink) playGulp(); else playCrunch(e.snack.id === 'banana' || e.snack.id === 'grapes'); }
+      e.nextBite += 0.4;
+    }
+    if (!e.snack.drink) n.props[e.snack.id].scale.setScalar(Math.max(0.15, 1 - 0.85 * smoothstep(e.t, 0.3, e.dur - 0.2)));
+    if (e.t >= e.dur) {
+      n.props[e.snack.id].visible = false;
+      n.energy = Math.min(100, n.energy + (e.snack.drink ? 45 : 60));
+      npcSay(n, e.snack.drink ? 'Oh be, su harika! 💧' : YUMMY[e.snack.id], 1.8);
+      n.eat = null;
+      n.mode = 'break';
+      n.tasks.shift();
+      planNextTask(n);
+    }
+    return;
+  }
+  // Yol noktalarını sırayla izle (takılırsa bir sonrakine geç)
+  const wp = n.path[0];
+  if (!wp) { planNextTask(n); return; }
+  const d = moveNpcFree(n, dt, wp);
+  n.stuckT = n.speed < 0.15 ? n.stuckT + dt : 0;
+  if (d < 0.4 || n.stuckT > 4) {
+    n.path.shift();
+    n.stuckT = 0;
+    if (!n.path.length) arriveTask(n);
+  }
+}
+// Yol bitince: o anki görevi yap
+function arriveTask(n) {
+  const task = n.tasks[0];
+  if (task === 'water') npcStartEating(n, SNACK_BY_ID.water, SNACK_BY_ID.water.pos);
+  else if (task === 'fruit') {
+    // En çok stoğu olan meyveyi ye (stok o arada bittiyse yardım iste)
+    const id = Object.keys(stock).reduce((a, b) => (stock[b] > stock[a] ? b : a));
+    if (stock[id] > 0) {
+      stock[id]--;
+      refreshDisplay(id);
+      npcStartEating(n, SNACK_BY_ID[id], SNACK_BY_ID[id].pos);
+    } else {
+      askForFruit(n);
+      n.tasks.shift();
+      planNextTask(n);
+    }
+  } else if (task === 'return') {
+    n.mode = 'play';
+    n.target.copy(supportSpot(n, null));
+    npcSay(n, 'Enerjim doldu, hadi oynayalım! ⚡', 2);
+  }
+}
+function askForFruit(n) {
+  npcSay(n, 'Meyve bitmiş! Bahçeden toplar mısın? 🧺', 2.6);
+  if (distXZ(n.pos, player.pos) < 30) showToast(`🧺 ${n.name}: "Meyve bitmiş! Bahçeden toplar mısın?"`);
+}
+// Bir sonraki görevin yolunu hazırla
+function planNextTask(n) {
+  const task = n.tasks[0];
+  if (task === 'fruit') {
+    if (Object.values(stock).every(v => v <= 0)) {
+      askForFruit(n);
+      n.tasks.shift();
+      planNextTask(n);
+      return;
+    }
+    const id = Object.keys(stock).reduce((a, b) => (stock[b] > stock[a] ? b : a));
+    n.path = [NAV.doorIn, NAV.hall, fruitSpot(id)].map(v => v.clone());
+  } else if (task === 'return') {
+    n.path = [NAV.hall, NAV.doorIn, NAV.doorOut, NAV.gateOut, NAV.gateIn, supportSpot(n, null)].map(v => v.clone());
+  } else {
+    n.mode = 'play';
+  }
 }
 
 function moveNpc(n, dt, run, hasBall, holder) {
@@ -3953,6 +4126,14 @@ function animateNpc(n, dt, hasBall, receiving) {
     lx = lerp(lx, -1.55, k); rx = lerp(rx, -1.55, k);
     n.passAnim = Math.max(0, n.passAnim - dt * 3);
   }
+  // Yeme/içme: sağ el ağza, içerken baş geriye
+  if (n.eat) {
+    const e = n.eat;
+    const raise = Math.min(1, e.t / 0.25) * Math.min(1, (e.dur - e.t) / 0.25);
+    const bite = e.snack.drink ? 0 : Math.sin(e.t * 16) * 0.12;
+    rx = lerp(rx, -2.15 + bite, raise); rz = lerp(rz, 0.5, raise);
+    n.head.rotation.x = lerp(0, e.snack.drink ? -0.3 : 0.06 + bite * 0.3, raise);
+  } else n.head.rotation.x = 0;
   n.armL.rotation.set(lx, 0, lz);
   n.armR.rotation.set(rx, 0, rz);
   // At kuyruğu: koşarken ve rüzgarda geriye savrulur
@@ -3995,6 +4176,11 @@ function updateNpcTags() {
     const vis = started && _tagV.z < 1 && d < 45 && Math.abs(_tagV.x) < 1.15 && Math.abs(_tagV.y) < 1.15;
     n.tag.style.display = vis ? 'block' : 'none';
     if (n.sayUntil && time > n.sayUntil) { n.sayEl.classList.remove('show'); n.sayUntil = 0; }
+    if (!vis) continue;
+    // Enerji çubuğu (azalınca turuncu)
+    const ew = `${Math.round(n.energy)}%`;
+    if (n.energyEl.style.width !== ew) n.energyEl.style.width = ew;
+    n.energyEl.classList.toggle('low', n.energy < 35);
     if (!vis) continue;
     n.tag.style.left = `${(_tagV.x * 0.5 + 0.5) * window.innerWidth}px`;
     n.tag.style.top = `${(-_tagV.y * 0.5 + 0.5) * window.innerHeight}px`;
