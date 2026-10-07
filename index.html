@@ -111,7 +111,8 @@
     position: absolute; left: 50%; top: 22%; transform: translate(-50%, -10px);
     padding: 10px 20px; border-radius: 12px; font-size: 20px; font-weight: 700;
     background: rgba(14, 20, 30, 0.6); border: 1px solid var(--panel-border);
-    opacity: 0; transition: opacity 0.3s ease, transform 0.3s ease; white-space: nowrap;
+    opacity: 0; transition: opacity 0.3s ease, transform 0.3s ease;
+    width: max-content; max-width: min(90vw, 640px); text-align: center;   /* uzun mesajlar alt satıra geçer */
   }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   @media (max-width: 640px) {
@@ -2260,19 +2261,10 @@ function stepDrop(i, dt) {
 // Balıkları besle: kırıntılar suya düşer, balıklar oraya koşuşur
 function feedFish() {
   if (time < pond.feedCooldown) { showToast('🐟 Balıklar tok! Biraz sonra tekrar besle'); return; }
-  const dx = player.pos.x - POND.cx, dz = player.pos.z - POND.cz, d = Math.hypot(dx, dz) || 1;
-  pond.feedPoint.set(POND.cx + dx / d * (POND.r - 0.9), POND_WATER_Y + 0.01, POND.cz + dz / d * (POND.r - 0.9));
-  pond.feedUntil = time + 7;
   pond.feedCooldown = time + 15;
-  player.heading = Math.atan2(-dx, -dz);
+  player.heading = Math.atan2(POND.cx - player.pos.x, POND.cz - player.pos.z);
   player.passAnim = 1;
-  pond.crumbs.visible = true;
-  pond.crumbData.forEach((c) => {
-    c.alive = true;
-    c.p.set(player.pos.x - dx / d * 0.5, 1.2, player.pos.z - dz / d * 0.5);
-    const tx = pond.feedPoint.x + rr(-0.35, 0.35), tz = pond.feedPoint.z + rr(-0.35, 0.35);
-    c.v.set((tx - c.p.x) / 0.6, 2.2, (tz - c.p.z) / 0.6);
-  });
+  pondFeedFrom(player.pos);
   setTimeout(() => {
     showToast('🐟 Balıklar yemleri kaptı! Çok mutlular! 💕');
     energy.stars++;
@@ -2669,7 +2661,7 @@ function nearestFreeSwing() {
   let best = -1, bd = 1.3;
   swings.forEach((s, i) => {
     const d = Math.hypot(player.pos.x - s.pivot.x, player.pos.z - s.pivot.z);
-    if (!s.rider && d < bd) { bd = d; best = i; }
+    if (!s.rider && !s.reservedBy && d < bd) { bd = d; best = i; }
   });
   return best;
 }
@@ -3213,15 +3205,18 @@ function onBasket() {
   teamScore++;
   document.getElementById('team').textContent = teamScore;
   const assist = ball.assistFrom && ball.assistFrom !== shooter && time - ball.assistTime < 10 ? ball.assistFrom : null;
-  const nameOf = (e) => (e === player ? 'Sen' : e.name);
+  const nameOf = (e) => (e === player ? 'Ali' : e.name);
   if (shooter === player) {
     score++;
     document.getElementById('score').textContent = score;
     showToast(assist ? `Basket! 🏀 ${assist.name} harika pas verdi! 🤝` : 'Basket! 🏀');
-    for (const n of npcs) npcSay(n, pick2(['Harika atış! 👏', 'Vay be! 🔥', 'Şampiyon! 🏆', 'Süpersin! ⭐']), 2.2);
+    // Yakında basket oynayan arkadaşlar alkışlar
+    for (const n of npcs) {
+      if (n.mode === 'play' && distXZ(n.pos, player.pos) < 25) npcSay(n, pick2(['Harika atış Ali! 👏', 'Vay be! 🔥', 'Şampiyon! 🏆', 'Süpersin Ali! ⭐']), 2.2);
+    }
   } else if (shooter) {
     showToast(assist ? `${shooter.name} sayı attı! Asist: ${nameOf(assist)} 🤝🎉` : `${shooter.name} sayı attı! 🎉`);
-    npcSay(shooter, assist === player ? 'Pasın için teşekkürler! 😊' : pick2(['Girdi! 😄', 'Sayı! 🎉', 'Yaşasın! 🙌']), 2.2);
+    npcSay(shooter, assist === player ? 'Pasın için teşekkürler Ali! 😊' : pick2(['Girdi! 😄', 'Sayı! 🎉', 'Yaşasın! 🙌']), 2.2);
     if (assist === player) { energy.stars++; popText('+1 ⭐ Asist', '#ffd84a'); playChime([659, 784, 1047, 1319]); }
   }
   ball.assistFrom = null;
@@ -4206,7 +4201,8 @@ startBtn.addEventListener('click', () => {
   cam.yaw = player.heading + Math.PI;
   lightning.next = time + 3;
   nextChirpAt = time + 1;
-  setTimeout(() => showToast(`🏀 Sahada Elif ve Can seni bekliyor! ${isTouch ? '"Pas" butonuyla' : 'P ile'} pas ver`), 3500);
+  setTimeout(() => showToast('👋 Merhaba Ali! Arkadaşların parkta seni bekliyor'), 3500);
+  setTimeout(() => showToast(`🏀 Sahada basket oynayanlara ${isTouch ? '"Pas" butonuyla' : 'P ile'} pas verebilirsin`), 7500);
 });
 
 let hudTimer = 0, fpsFrames = 0, fpsTime = 0;
@@ -4276,7 +4272,8 @@ window.addEventListener('resize', () => {
 });
 
 /* =====================================================================
-   OYUN ARKADAŞLARI: Elif ve Can (pas, ribaund, şut, konuşma balonları)
+   OYUN ARKADAŞLARI: Elif, Can, İnci, Duygu, Aren, Hasan
+   (her biri canı ne isterse: basket, balık yemleme, salıncak, kaydırak; acıkınca mola)
    ===================================================================== */
 const inCourt = (x, z, pad = 0) => Math.abs(x - COURT.cx) < COURT.hx - pad && Math.abs(z - COURT.cz) < COURT.hz - pad;
 
@@ -4292,13 +4289,15 @@ function makeNumberMaterial(num) {
   return new THREE.MeshLambertMaterial({ map: tex, transparent: true });
 }
 
-// Oyun arkadaşı modeli (oyuncuyla aynı oranlar; kız: at kuyruğu + saç bandı, erkek: ters kep)
+// Oyun arkadaşı modeli (oyuncuyla aynı oranlar). Saç stilleri:
+// 'ponytail' at kuyruğu · 'pigtails' iki yandan toplu · 'long' uzun saç · 'cap' ters kep · 'spiky' dik saç · 'buzz' kısa saç + gözlük
 function makeKid(cfg) {
   const mm = {
     skin: M(cfg.skin), hair: M(cfg.hair, { roughness: 0.9 }), shirt: M(cfg.shirt),
     trim: M(cfg.trim), shorts: M(cfg.shorts), shoe: M(cfg.shoe),
   };
   const root = new THREE.Group(), body = new THREE.Group();
+  root.rotation.order = 'YXZ';                     // salıncak/kaydırak eğimi için
   root.add(body);
   const legs = [1, -1].map(side => {
     const leg = new THREE.Group();
@@ -4342,32 +4341,69 @@ function makeKid(cfg) {
     head.add(s);
   }
   head.add(part(0.47, 0.14, 0.43, mm.hair, 0, 0.39, -0.01, 0.06));
-  head.add(part(0.47, 0.28, 0.12, mm.hair, 0, 0.25, -0.16, 0.05));
+  head.add(part(0.47, cfg.style === 'buzz' ? 0.2 : 0.28, 0.12, mm.hair, 0, cfg.style === 'buzz' ? 0.29 : 0.25, -0.16, 0.05));
   for (const sx of [-1, 1]) head.add(part(0.05, 0.18, 0.3, mm.hair, 0.225 * sx, 0.3, -0.04));
-  let tail = null;
-  if (cfg.girl) {
-    for (let i = 0; i < 3; i++) {
-      const f = part(0.15, 0.09, 0.06, mm.hair, -0.14 + i * 0.14, 0.33, 0.19, 0.03);
-      f.rotation.z = (1 - i) * 0.2;
+  const tails = [];
+  const fringe = (w, n, y) => {
+    for (let i = 0; i < n; i++) {
+      const f = part(w, 0.09, 0.06, mm.hair, -w * (n - 1) / 2 + i * w * 0.95, y, 0.19, 0.03);
+      f.rotation.z = ((n - 1) / 2 - i) * 0.2;
       head.add(f);
     }
+  };
+  const makeTail = (x, y, z, len) => {
+    const t = new THREE.Group();
+    t.position.set(x, y, z);
+    t.add(part(0.09, 0.07, 0.07, mm.trim, 0, 0, 0, 0.03));                             // toka
+    t.add(part(0.12, len, 0.1, mm.hair, 0, -len / 2, -0.02, 0.05));
+    head.add(t);
+    tails.push(t);
+  };
+  if (cfg.style === 'ponytail') {
+    fringe(0.15, 3, 0.33);
     for (const sx of [-1, 1]) head.add(part(0.06, 0.34, 0.2, mm.hair, 0.235 * sx, 0.2, -0.08, 0.03));
     head.add(part(0.48, 0.045, 0.44, mm.trim, 0, 0.375, -0.01, 0.02));              // saç bandı
-    tail = new THREE.Group();                                                          // at kuyruğu
-    tail.position.set(0, 0.36, -0.22);
-    tail.add(part(0.09, 0.07, 0.07, mm.trim, 0, 0, -0.02, 0.03));
-    tail.add(part(0.13, 0.36, 0.11, mm.hair, 0, -0.17, -0.05, 0.05));
-    head.add(tail);
-  } else {
+    makeTail(0, 0.36, -0.24, 0.36);
+  } else if (cfg.style === 'pigtails') {
+    fringe(0.15, 3, 0.33);
+    for (const sx of [-1, 1]) makeTail(0.25 * sx, 0.3, -0.06, 0.3);
+  } else if (cfg.style === 'long') {
+    fringe(0.12, 4, 0.33);
+    head.add(part(0.47, 0.6, 0.12, mm.hair, 0, 0.1, -0.17, 0.05));                  // sırta inen uzun saç
+    for (const sx of [-1, 1]) head.add(part(0.06, 0.46, 0.24, mm.hair, 0.235 * sx, 0.15, -0.06, 0.03));
+    const flower = new THREE.Group();                                                 // çiçekli toka
+    flower.position.set(0.2, 0.37, 0.12);
+    for (let i = 0; i < 5; i++) {
+      const p = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 5), M(0xff7eb6));
+      p.position.set(Math.cos(i * 1.26) * 0.035, Math.sin(i * 1.26) * 0.035, 0);
+      flower.add(p);
+    }
+    flower.add(new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 5), M(0xffe066)));
+    head.add(flower);
+  } else if (cfg.style === 'cap') {
     head.add(part(0.49, 0.15, 0.45, mm.trim, 0, 0.43, -0.01, 0.07));                 // ters kep
     const visor = part(0.3, 0.03, 0.18, mm.trim, 0, 0.38, -0.29, 0.01);
     visor.rotation.x = -0.15;
     head.add(visor);
-    for (let i = 0; i < 3; i++) {
-      const f = part(0.12, 0.08, 0.06, mm.hair, -0.13 + i * 0.13, 0.35, 0.19, 0.02);
-      f.rotation.z = (i - 1) * 0.3;
-      head.add(f);
+    fringe(0.12, 3, 0.35);
+  } else if (cfg.style === 'spiky') {
+    for (let i = 0; i < 6; i++) {                                                     // dik saç uçları
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 5), mm.hair);
+      sp.position.set(-0.15 + (i % 3) * 0.15, 0.49, i < 3 ? 0.06 : -0.1);
+      sp.rotation.set(i < 3 ? 0.3 : -0.3, 0, (1 - (i % 3)) * 0.3);
+      head.add(sp);
     }
+    head.add(part(0.48, 0.05, 0.44, mm.trim, 0, 0.34, -0.01, 0.02));                 // saç bandı
+  } else if (cfg.style === 'buzz') {
+    fringe(0.12, 3, 0.36);
+    const frame = M(0x222831, { roughness: 0.4 });                                   // gözlük
+    for (const sx of [-1, 1]) {
+      head.add(part(0.12, 0.012, 0.01, frame, 0.09 * sx, 0.245, 0.212));
+      head.add(part(0.12, 0.012, 0.01, frame, 0.09 * sx, 0.155, 0.212));
+      head.add(part(0.012, 0.09, 0.01, frame, 0.09 * sx + 0.06 * sx, 0.2, 0.212));
+      head.add(part(0.012, 0.09, 0.01, frame, 0.09 * sx - 0.06 * sx, 0.2, 0.212));
+    }
+    head.add(part(0.06, 0.012, 0.01, frame, 0, 0.22, 0.212));
   }
   const arms = [1, -1].map(side => {
     const arm = new THREE.Group();
@@ -4382,38 +4418,61 @@ function makeKid(cfg) {
     torso.add(arm);
     return { arm, hand };
   });
+  // Performans: yüzdeki küçük parçalar gölge düşürmesin
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    if (o.geometry.boundingSphere.radius < 0.06) o.castShadow = false;
+  });
   root.scale.setScalar(cfg.scale);
   scene.add(root);
   return {
-    root, body, legL: legs[0], legR: legs[1], torso, chest, head, tail,
+    root, body, legL: legs[0], legR: legs[1], torso, chest, head, tails,
     armL: arms[0].arm, handL: arms[0].hand, armR: arms[1].arm, handR: arms[1].hand,
   };
 }
 
+// Altı arkadaş: her biri ilk başta farklı bir etkinlikte
 const NPC_SPECS = [
-  { name: 'Elif', girl: true, number: '7', skin: 0xf0c39b, hair: 0x3b2314, shirt: 0xe2468f, trim: 0xffd23f,
-    shorts: 0x5b3fa0, shoe: 0x7c4dff, scale: 0.97, color: '#d63a84', start: [COURT.cx - 4, COURT.cz + 2] },
-  { name: 'Can', girl: false, number: '10', skin: 0xc98f62, hair: 0x1f150e, shirt: 0x2fa36b, trim: 0xff8a2a,
-    shorts: 0x1f2d3d, shoe: 0x2a7de1, scale: 1.0, color: '#24945c', start: [COURT.cx + 4, COURT.cz - 2] },
+  { name: 'Elif', style: 'ponytail', number: '7', skin: 0xf0c39b, hair: 0x3b2314, shirt: 0xe2468f, trim: 0xffd23f,
+    shorts: 0x5b3fa0, shoe: 0x7c4dff, scale: 0.97, color: '#d63a84', act: 'basket', start: [COURT.cx - 4, COURT.cz + 2], energy: 92 },
+  { name: 'Can', style: 'cap', number: '10', skin: 0xc98f62, hair: 0x1f150e, shirt: 0x2fa36b, trim: 0xff8a2a,
+    shorts: 0x1f2d3d, shoe: 0x2a7de1, scale: 1.0, color: '#24945c', act: 'basket', start: [COURT.cx + 4, COURT.cz - 2], energy: 62 },
+  { name: 'İnci', style: 'pigtails', number: '3', skin: 0xe8b48f, hair: 0x16110d, shirt: 0x8e5cd9, trim: 0x7fe3ff,
+    shorts: 0x2d2a5a, shoe: 0xff6fb1, scale: 0.95, color: '#7a4fc9', act: 'pond', energy: 80 },
+  { name: 'Duygu', style: 'long', number: '5', skin: 0xf3cfb0, hair: 0x7a3b1d, shirt: 0xf28c28, trim: 0xffffff,
+    shorts: 0x1f6f8b, shoe: 0x2fd0a0, scale: 0.98, color: '#d9701a', act: 'swing', energy: 74 },
+  { name: 'Aren', style: 'spiky', number: '8', skin: 0xd9a273, hair: 0x2a1a10, shirt: 0x2e7dd1, trim: 0xffd23f,
+    shorts: 0x1d2b44, shoe: 0xff5a3c, scale: 1.03, color: '#2a6fc0', act: 'basket', start: [COURT.cx, COURT.cz + 3.5], energy: 85 },
+  { name: 'Hasan', style: 'buzz', number: '11', skin: 0xb57a52, hair: 0x0f0b08, shirt: 0xd33b3b, trim: 0x222222,
+    shorts: 0x3a3a3a, shoe: 0xf2f2f2, scale: 1.0, color: '#c43030', act: 'slide', energy: 68 },
 ];
-const npcs = NPC_SPECS.map((spec) => {
+const npcs = NPC_SPECS.map((spec, idx) => {
   const kid = makeKid(spec);
   const tag = document.createElement('div');
   tag.className = 'npc-tag';
   tag.innerHTML = `<div class="say"></div><span class="name" style="background:${spec.color}">${spec.name}</span><div class="mini"><div></div></div>`;
   hudEl.appendChild(tag);
+  const start = spec.start || [0, 0];
   return {
-    ...kid, name: spec.name, scale: spec.scale,
-    pos: new THREE.Vector3(spec.start[0], 0, spec.start[1]), vel: new THREE.Vector2(), heading: Math.PI / 2, speed: 0,
-    target: new THREE.Vector3(spec.start[0], 0, spec.start[1]), retargetAt: 0,
+    ...kid, name: spec.name, scale: spec.scale, idx,
+    pos: new THREE.Vector3(start[0], 0, start[1]), vel: new THREE.Vector2(), heading: Math.PI / 2, speed: 0,
+    target: new THREE.Vector3(start[0], 0, start[1]), retargetAt: 0,
     walkPhase: Math.random() * 6, holdTime: 0, decideAt: 2, requested: false,
-    dribblePhase: 0, dribbleK: 0, shootAnim: 0, passAnim: 0, callUntil: 0, nextChat: rr(2, 5),
-    tag, sayEl: tag.querySelector('.say'), sayUntil: 0,
-    energyEl: tag.querySelector('.mini div'),
-    // Mola: oynadıkça enerji azalır, odaya gidip su içer/meyve yer ('play' | 'break' | 'eating')
-    mode: 'play', energy: spec.girl ? 92 : 62, path: [], tasks: [], eat: null, props: {}, stuckT: 0, faceTo: null,
+    dribblePhase: 0, dribbleK: 0, shootAnim: 0, passAnim: 0, callUntil: 0, nextChat: rr(2, 6),
+    tag, sayEl: tag.querySelector('.say'), sayUntil: 0, energyEl: tag.querySelector('.mini div'),
+    // mode: 'play' (basket) | 'travel' | 'eating' | 'seesaw' | 'pond' | 'swingRide' | 'slideRide'
+    mode: 'play', area: 'court', energy: spec.energy, path: [], tasks: [], eat: null, props: {}, stuckT: 0, faceTo: null,
+    activity: 'basket', activityUntil: rr(30, 60), nextAct: null, destArea: null,
+    swingIdx: -1, rideT: 0, amp: 0, tiltX: 0, sitPose: false, feedAt: 0, slideLoop: 0,
   };
 });
+
+// Ana karakter Ali'nin isim etiketi
+const aliTag = document.createElement('div');
+aliTag.className = 'npc-tag';
+aliTag.innerHTML = '<span class="name" style="background:#3b78d8">Ali</span>';
+hudEl.appendChild(aliTag);
 
 function npcSay(n, text, dur = 1.8) {
   n.sayEl.textContent = text;
@@ -4422,8 +4481,9 @@ function npcSay(n, text, dur = 1.8) {
   n.sayEl.classList.add('show');
   n.sayUntil = time + dur;
 }
-const otherNpc = (n) => npcs.find(o => o !== n);
 const distXZ = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+// Sahada basket oynayan diğer arkadaşlar
+const mates = (n) => npcs.filter(o => o !== n && o.mode === 'play' && inCourt(o.pos.x, o.pos.z));
 // Oyuncu pas almaya hazır mı? (sahaya yakın, oturmuyor/yemiyor)
 function playerReady(n) {
   return started && !player.sitting && !player.action && !player.ride && player.grounded && !basket.carried &&
@@ -4436,7 +4496,7 @@ function catchPoint(e, out) {
   const s = e === player ? 1 : e.scale;
   return out.set(p.x + Math.sin(h) * 0.32, p.y + 1.0 * s, p.z + Math.cos(h) * 0.32);
 }
-// Sahada çizgilerin içinde kalan rastgele bir nokta
+// Sahada çizgilerin içinde kalan nokta
 function clampToCourt(v) {
   v.x = clamp(v.x, COURT.cx - COURT.L / 2 + 0.8, COURT.cx + COURT.L / 2 - 0.8);
   v.z = clamp(v.z, COURT.cz - COURT.Wd / 2 + 0.6, COURT.cz + COURT.Wd / 2 - 0.6);
@@ -4449,13 +4509,13 @@ function shootSpot(x, z) {
   const r = rr(2.5, 6), a = rr(-1.1, 1.1);
   return clampToCourt(new THREE.Vector3(hoop.rim.x + inward * Math.cos(a) * r, 0, hoop.rim.z + Math.sin(a) * r));
 }
-// Topu tutanın hücum ettiği potanın çevresinde boş bir yer (iki arkadaş farklı kanatlara)
+// Topu tutanın hücum ettiği potanın çevresinde boş bir yer (arkadaşlar farklı kanatlara dağılır)
 function supportSpot(n, holder) {
   const ref = holder ? (holder === player ? player.pos : holder.pos) : n.pos;
   const { hoop } = nearestHoop(ref.x, ref.z);
   const inward = Math.sign(COURT.cx - hoop.rim.x);
-  const side = n === npcs[0] ? 1 : -1;
-  const a = side * rr(0.5, 1.2), r = rr(3, 6.5);
+  const side = n.idx % 2 ? 1 : -1;
+  const a = side * rr(0.3, 1.25), r = rr(3, 6.5);
   return clampToCourt(new THREE.Vector3(hoop.rim.x + inward * Math.cos(a) * r, 0, hoop.rim.z + Math.sin(a) * r));
 }
 
@@ -4486,7 +4546,7 @@ function updatePass(dt) {
       if (p.passer !== player) popText('🤝', '#9fd8ff');
     } else {
       giveToNpc(p.to);
-      if (p.passer === player) npcSay(p.to, pick2(['Süper pas! 👍', 'Yakaladım! 😄', 'Teşekkürler! 🙌', 'Harika pas!']), 1.6);
+      if (p.passer === player) npcSay(p.to, pick2(['Süper pas Ali! 👍', 'Yakaladım! 😄', 'Teşekkürler Ali! 🙌', 'Harika pas!']), 1.6);
     }
   }
 }
@@ -4515,20 +4575,21 @@ function npcShoot(n, hoop, dist) {
   n.energy = Math.max(0, n.energy - 5);
   if (Math.random() < 0.4) npcSay(n, pick2(['Şut! 🏀', 'Bakın! 👀', 'Hop!']), 1.2);
 }
-// Topu tutan arkadaş ne yapsın? Oyuncu yakındaysa çoğunlukla ona pas verir
+// Topu tutan arkadaş ne yapsın? Ali yakındaysa çoğunlukla ona pas verir
 function npcDecide(n) {
-  const other = otherNpc(n);
-  const otherOk = other.mode === 'play';
+  const m = mates(n);
+  const other = m.length ? pick2(m) : null;
   const pReady = playerReady(n);
   const { hoop, dist } = nearestHoop(n.pos.x, n.pos.z);
-  // Acıkınca topu birine verip molaya çıkar
-  if (n.energy < 30) {
-    if (pReady) return npcPassTo(n, player, 'Al, ben biraz dinleneyim! 💧');
-    if (otherOk) return npcPassTo(n, other, `${other.name}, top sende! Ben mola veriyorum 💧`);
+  // Acıkınca / başka bir şey yapmak isteyince topu birine verir
+  if (n.energy < 30 || time > n.activityUntil) {
+    const why = n.energy < 30 ? 'ben biraz dinleneyim! 💧' : 'ben biraz başka bir şey oynayacağım! 😊';
+    if (pReady) return npcPassTo(n, player, `Al Ali, ${why}`);
+    if (other) return npcPassTo(n, other, `${other.name}, top sende, ${why}`);
   }
   const r = Math.random();
-  if (pReady && r < 0.55) return npcPassTo(n, player, pick2(['Sıra sende! 🏀', 'Al bakalım!', 'Hadi, at!', 'Senin için! 😊']));
-  if (otherOk && r < (pReady ? 0.72 : 0.4)) return npcPassTo(n, other, `${other.name}, yakala!`);
+  if (pReady && r < 0.5) return npcPassTo(n, player, pick2(['Ali, sıra sende! 🏀', 'Al bakalım Ali!', 'Hadi Ali, at!', 'Senin için Ali! 😊']));
+  if (other && r < (pReady ? 0.75 : 0.5)) return npcPassTo(n, other, `${other.name}, yakala!`);
   if (dist > 8) { n.target.copy(shootSpot(n.pos.x, n.pos.z)); n.decideAt = n.holdTime + 1.2; return; }
   npcShoot(n, hoop, dist);
 }
@@ -4538,7 +4599,7 @@ function bestPassTarget() {
   const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);   // ekranda baktığın yön
   let best = null, bs = -Infinity;
   for (const n of npcs) {
-    if (n.mode !== 'play') continue;                 // moladaki arkadaşa pas atılmaz
+    if (n.mode !== 'play') continue;                 // basket oynamayan arkadaşa pas atılmaz
     const d = distXZ(n.pos, player.pos);
     if (d > 22 || d < 0.8) continue;
     const dot = ((n.pos.x - player.pos.x) * fx + (n.pos.z - player.pos.z) * fz) / d;
@@ -4552,7 +4613,7 @@ function passOrRequest() {
   if (basket.carried) { showToast('🧺 Önce sepeti bırak, sonra oynarız!'); return; }
   if (ball.state === 'held') {
     const n = bestPassTarget();
-    if (!n) { showToast('🤝 Pas atacak arkadaş yok. Sahadaki Elif ve Can\'ın yanına git!'); return; }
+    if (!n) { showToast('🤝 Pas atacak arkadaş yok. Sahada basket oynayanların yanına git!'); return; }
     player.heading = Math.atan2(n.pos.x - player.pos.x, n.pos.z - player.pos.z);
     player.passAnim = 1;
     startPass(player, n);
@@ -4560,13 +4621,13 @@ function passOrRequest() {
     const n = ball.npc;
     if (distXZ(n.pos, player.pos) > 25) { showToast('Çok uzaktasın! Sahaya yaklaş 🏀'); return; }
     n.requested = true;
-    npcSay(n, pick2(['Tamam, geliyor! 👍', 'Al bakalım!', 'Yakala!']), 1.4);
+    npcSay(n, pick2(['Tamam Ali, geliyor! 👍', 'Al bakalım!', 'Yakala Ali!']), 1.4);
   }
 }
 
 function updateNPCs(dt) {
   const holder = ball.state === 'npc' ? ball.npc : ball.state === 'held' ? player : null;
-  // Kaçan topu en yakın arkadaş kovalar (oyuncu daha yakınsa bekler)
+  // Kaçan topu sahadaki en yakın arkadaş kovalar (Ali daha yakınsa bekler)
   let chaser = null;
   if (ball.state === 'thrown' && inCourt(ball.pos.x, ball.pos.z, 0.6) && time - ball.throwTime > 0.5) {
     let bd = Infinity;
@@ -4578,21 +4639,20 @@ function updateNPCs(dt) {
     if (inCourt(player.pos.x, player.pos.z) && distXZ(player.pos, ball.pos) < bd - 0.5) chaser = null;
   }
   for (const n of npcs) {
-    // Moladaysa: odaya yürü, su iç, meyve ye, geri dön
+    // Basket dışındaki her şey: yürüme, yeme, havuz, salıncak, kaydırak, tahterevalli
     if (n.mode !== 'play') {
-      updateBreak(n, dt);
+      updateNpcActivity(n, dt);
       animateNpc(n, dt, false, false);
       continue;
     }
     let run = false;
     const hasBall = ball.state === 'npc' && ball.npc === n;
     const receiving = ball.state === 'pass' && ball.pass.to === n;
-    // Oynadıkça enerji azalır; topsuzken ve sıra uygunsa molaya çıkar
-    if (started) n.energy = Math.max(0, n.energy - dt * 1.0);
-    if (started && n.energy < 30 && !hasBall && !receiving && n !== chaser &&
-        (otherNpc(n).mode === 'play' || n.energy < 10)) {
-      startBreak(n);
-      continue;
+    if (started) n.energy = Math.max(0, n.energy - dt * 0.6);
+    // Topsuzken: acıktıysa molaya, canı başka bir şey istediyse yeni etkinliğe
+    if (started && !hasBall && !receiving && n !== chaser) {
+      if (n.energy < 30) { startBreak(n); continue; }
+      if (time > n.activityUntil) { chooseActivity(n, 'basket'); continue; }
     }
     if (hasBall) {
       n.holdTime += dt;
@@ -4613,13 +4673,13 @@ function updateNPCs(dt) {
     }
     // Pas isteme, davet ve cesaretlendirme
     if (!hasBall && !receiving && started && time > n.nextChat) {
-      n.nextChat = time + rr(4, 8);
+      n.nextChat = time + rr(5, 10);
       const pd = distXZ(n.pos, player.pos);
-      if (energy.value < 25 && pd < 20) npcSay(n, 'Yorulduysan dinlen, meyve ye! 🍎', 2.2);
+      if (energy.value < 25 && pd < 20) npcSay(n, 'Ali, yorulduysan dinlen, meyve ye! 🍎', 2.2);
       else if (holder === player && pd < 17) {
-        npcSay(n, pick2(['Pas ver! 🙋', 'Bana at!', 'Buradayım! 👋', 'Boştayım!']), 1.8);
+        npcSay(n, pick2(['Ali, pas ver! 🙋', 'Ali, bana at!', 'Buradayım Ali! 👋', 'Boştayım!']), 1.8);
         n.callUntil = time + 1.6;
-      } else if (holder === player && pd < 35) npcSay(n, pick2(['Gel, beraber oynayalım! 🏀', 'Hadi gel! 👋']), 2.2);
+      } else if (holder === player && pd < 35) npcSay(n, pick2(['Ali, gel beraber oynayalım! 🏀', 'Hadi gel Ali! 👋']), 2.2);
     }
     // Bu karede şut/pas atıldıysa top artık elinde değil (yeniden kontrol et)
     const holdsNow = ball.state === 'npc' && ball.npc === n;
@@ -4630,30 +4690,164 @@ function updateNPCs(dt) {
   updateNpcTags();
 }
 
-// ---------- Mola: sahadan odaya, su + meyve, sonra sahaya dönüş ----------
+/* ---------- Gezinme: alanlar arasında yürüme yollarını izleyerek gidiş ---------- */
 const NAV = {
   gateIn: new THREE.Vector3(COURT.cx, 0, COURT.cz + COURT.hz - 1.0),
-  gateOut: new THREE.Vector3(COURT.cx, 0, COURT.cz + COURT.hz + 1.3),
-  doorOut: new THREE.Vector3(LOUNGE.cx + LOUNGE.hx + 1.0, 0, LOUNGE.cz - 0.15),
   doorIn: new THREE.Vector3(LOUNGE.cx + LOUNGE.hx - 1.3, 0, LOUNGE.cz - 0.15),
   hall: new THREE.Vector3(LOUNGE.cx + 1.7, 0, LOUNGE.cz + 2.0),
 };
+const AREA_PATH = { court: 0, lounge: 1, play: 3, pond: 4 };   // her alanın meydandan gelen yolu
+const POND_STAND_R = POND.r + 0.75;                               // havuz kenarındaki halka yolda durma yarıçapı
+const pondAngle = (p) => Math.atan2(p.z - POND.cz, p.x - POND.cx);
+const POND_ENTRY_ANGLE = (() => { const ps = PATH_DEFS[4].pts, p = ps[ps.length - 1]; return Math.atan2(p[1] - POND.cz, p[0] - POND.cx); })();
+// Halka yol üzerinde iki açı arasında yürüme noktaları
+function ringPts(a0, a1) {
+  let d = ((a1 - a0 + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  const n = Math.max(1, Math.ceil(Math.abs(d) / 0.5));
+  const out = [];
+  for (let i = 1; i <= n; i++) {
+    const a = a0 + d * i / n;
+    out.push(new THREE.Vector3(POND.cx + Math.cos(a) * POND_STAND_R, 0, POND.cz + Math.sin(a) * POND_STAND_R));
+  }
+  return out;
+}
+// Yolun örnek noktalarından ~2 m arayla seç (meydandan alana doğru)
+function pathPts(idx, reverse) {
+  const pts = PATH_SAMPLES[idx].pts, out = [];
+  for (let i = 0; i < pts.length; i += 4) out.push(new THREE.Vector3(pts[i].x, 0, pts[i].z));
+  const last = pts[pts.length - 1];
+  out.push(new THREE.Vector3(last.x, 0, last.z));
+  return reverse ? out.reverse() : out;
+}
+// Bulunulan alandan hedef alana: alandan çık → yoldan meydana → hedefin yolundan gir → hedef nokta
+function route(n, to, dest) {
+  const from = n.area, pts = [];
+  if (from === to) {
+    if (to === 'pond') pts.push(...ringPts(pondAngle(n.pos), pondAngle(dest)));
+    pts.push(dest.clone());
+    return pts;
+  }
+  if (from === 'court') pts.push(NAV.gateIn.clone());
+  if (from === 'lounge') pts.push(NAV.hall.clone(), NAV.doorIn.clone());
+  if (from === 'pond') pts.push(...ringPts(pondAngle(n.pos), POND_ENTRY_ANGLE));
+  if (from in AREA_PATH) pts.push(...pathPts(AREA_PATH[from], true));
+  if (to in AREA_PATH) pts.push(...pathPts(AREA_PATH[to], false));
+  if (to === 'court') pts.push(NAV.gateIn.clone());
+  if (to === 'lounge') pts.push(NAV.doorIn.clone());
+  if (to === 'pond') pts.push(...ringPts(POND_ENTRY_ANGLE, pondAngle(dest)));
+  pts.push(dest.clone());
+  return pts;
+}
+function travel(n, to, dest, tasks) {
+  n.mode = 'travel';
+  n.tasks = tasks;
+  n.destArea = to;
+  n.path = route(n, to, dest);
+  n.stuckT = 0;
+  n.pos.y = 0;
+  n.tiltX = 0;
+}
+
+/* ---------- Etkinlik seçimi: her çocuk canı ne isterse onu yapar ---------- */
+const ACT_LINES = {
+  basket: ['Basket oynamaya gidiyorum! 🏀', 'Hadi biraz basket! 🏀'],
+  pond: ['Balıkları beslemeye gidiyorum! 🐟', 'Havuza bakmaya gidiyorum ⛲'],
+  swing: ['Salıncağa gidiyorum! 🎠', 'Sallanmak istiyorum! 🎠'],
+  slide: ['Kaydırak zamanı! 🛝', 'Kaydıraktan kayacağım! 🛝'],
+};
+function freeSwingIndex() {
+  return swings.findIndex(s => !s.rider && !s.reservedBy);
+}
+function chooseActivity(n, avoid, msg) {
+  const others = npcs.filter(o => o !== n);
+  const count = (a) => others.filter(o => o.activity === a).length;
+  const opts = [
+    ['basket', count('basket') < 2 ? 4 : 2],
+    ['pond', count('pond') < 2 ? 2 : 0.5],
+    ['swing', freeSwingIndex() >= 0 ? 2 : 0],
+    ['slide', count('slide') < 2 ? 2 : 0.3],
+  ].map(([a, w]) => [a, a === avoid ? w * 0.15 : w]);
+  const total = opts.reduce((s, o) => s + o[1], 0);
+  let r = Math.random() * total, act = 'basket';
+  for (const [a, w] of opts) { if ((r -= w) <= 0) { act = a; break; } }
+  goActivity(n, act, msg);
+}
+function goActivity(n, act, msg) {
+  let to, dest;
+  if (act === 'basket') { to = 'court'; dest = supportSpot(n, null); }
+  else if (act === 'pond') {
+    const a = rr(-Math.PI, Math.PI);
+    to = 'pond'; dest = new THREE.Vector3(POND.cx + Math.cos(a) * POND_STAND_R, 0, POND.cz + Math.sin(a) * POND_STAND_R);
+  } else if (act === 'swing') {
+    const i = freeSwingIndex();
+    if (i < 0) { goActivity(n, 'slide', msg); return; }
+    swings[i].reservedBy = n;
+    n.swingIdx = i;
+    to = 'play'; dest = new THREE.Vector3(swings[i].pivot.x, 0, swings[i].pivot.z + 1.1);
+  } else {
+    to = 'play'; dest = new THREE.Vector3(SLIDE.ladder.x - 0.5, 0, SLIDE.ladder.z);
+  }
+  n.activity = act;
+  n.nextAct = act;
+  travel(n, to, dest, ['act']);
+  npcSay(n, msg || pick2(ACT_LINES[act]), 2);
+}
+// Etkinliğe başla (hedefe varınca)
+function beginActivity(n, act) {
+  n.activityUntil = time + rr(30, 60);
+  n.pos.y = 0;
+  if (act === 'basket') {
+    n.mode = 'play';
+    n.target.copy(supportSpot(n, null));
+  } else if (act === 'pond') {
+    n.mode = 'pond';
+    n.feedAt = time + rr(1, 3);
+    n.path = [];
+  } else if (act === 'swing') {
+    const s = swings[n.swingIdx];
+    if (!s || s.rider) { if (s) s.reservedBy = null; chooseActivity(n, 'swing'); return; }
+    s.rider = true;
+    n.mode = 'swingRide';
+    n.rideT = 0;
+    n.amp = Math.min(0.2, Math.abs(s.angle));
+  } else {
+    n.mode = 'slideRide';
+    n.rideT = 0;
+    n.path = [];
+    n.slideLoop = 0;
+  }
+}
+// Etkinliği bırak (salıncağı boşalt, yere in)
+function endActivity(n) {
+  if (n.mode === 'swingRide') {
+    const s = swings[n.swingIdx];
+    s.rider = false;
+    s.reservedBy = null;
+    n.pos.set(s.pivot.x, 0, s.pivot.z + 1.1);
+  } else if (n.mode === 'slideRide' && !n.path.length && n.rideT > 0) {
+    n.pos.copy(n.rideT > 1.6 ? SLIDE.exit : SLIDE.ladder).setY(0);
+    n.pos.x -= n.rideT > 1.6 ? 0 : 0.5;
+  }
+  if (n.swingIdx >= 0 && swings[n.swingIdx].reservedBy === n) swings[n.swingIdx].reservedBy = null;
+  n.pos.y = 0;
+  n.tiltX = 0;
+  n.sitPose = false;
+}
+
+/* ---------- Mola: odaya git, su iç, meyve ye ---------- */
 const waterSpot = () => { const w = SNACK_BY_ID.water.pos; return new THREE.Vector3(w.x - 0.1, 0, w.z + 0.95); };
 const fruitSpot = (id) => { const p = SNACK_BY_ID[id].pos; return new THREE.Vector3(p.x, 0, p.z - 1.0); };
 const YUMMY = {
   apple: 'Mmm, elma çok tatlı! 😋', banana: 'Muz enerji verdi! 🍌💪',
   carrot: 'Kıtır kıtır havuç! 🥕', grapes: 'Üzümler nefis! 🍇',
 };
-
 function startBreak(n) {
-  n.mode = 'break';
-  n.tasks = ['water', 'fruit', 'return'];
-  const route = inCourt(n.pos.x, n.pos.z) ? [NAV.gateIn, NAV.gateOut] : [];
-  n.path = [...route, NAV.doorOut, NAV.doorIn, waterSpot()].map(v => v.clone());
-  n.stuckT = 0;
+  endActivity(n);
+  n.activity = 'eat';
+  travel(n, 'lounge', waterSpot(), ['water', 'fruit', 'return']);
   npcSay(n, n.energy < 20 ? 'Acıktım! Bir şeyler yiyeceğim 🍎' : 'Su molası! 💧', 2);
 }
-// Molada yürüme: sahaya kapatılmadan, duvar ve mobilyalardan kaçarak
+// Yürüme: duvar ve mobilyalardan kaçarak
 function moveNpcFree(n, dt, target) {
   const dx = target.x - n.pos.x, dz = target.z - n.pos.z, d = Math.hypot(dx, dz);
   let tx = 0, tz = 0;
@@ -4663,7 +4857,7 @@ function moveNpcFree(n, dt, target) {
   n.pos.x += n.vel.x * dt;
   n.pos.z += n.vel.y * dt;
   for (const o of [player, ...npcs]) {
-    if (o === n) continue;
+    if (o === n || (o !== player && (o.mode === 'swingRide' || o.mode === 'slideRide' || o.mode === 'seesaw'))) continue;
     const ox = n.pos.x - o.pos.x, oz = n.pos.z - o.pos.z, od = Math.hypot(ox, oz) || 1e-4;
     if (od < 0.7) { n.pos.x += ox / od * (0.7 - od); n.pos.z += oz / od * (0.7 - od); }
   }
@@ -4687,36 +4881,41 @@ function npcStartEating(n, snack, faceTo) {
   n.props[snack.id].visible = true;
   n.props[snack.id].scale.setScalar(1);
 }
-// Tahterevalli arkadaşı: oyuncu binince sahadan gelip karşı uca oturur
+// Tahterevalli arkadaşı: Ali binince en yakın uygun arkadaş gelip karşı uca oturur
 const playerOnSeesaw = () => player.ride && player.ride.kind === 'seesaw';
 function callSeesawPartner() {
-  const free = npcs.filter(n => n.mode === 'play' && !(ball.state === 'npc' && ball.npc === n) &&
-    !(ball.state === 'pass' && ball.pass.to === n));
+  const free = npcs.filter(n => (n.mode === 'play' || n.mode === 'pond' || n.mode === 'slideRide') &&
+    !(ball.state === 'npc' && ball.npc === n) && !(ball.state === 'pass' && ball.pass.to === n));
   if (!free.length) return;
   free.sort((a, b) => distXZ(a.pos, player.pos) - distXZ(b.pos, player.pos));
   const n = free[0];
-  const spot = new THREE.Vector3(seesaw.pivot.x - 2.1, 0, seesaw.pivot.z + 0.6);
-  n.mode = 'break';
-  n.tasks = ['seesaw'];
-  n.stuckT = 0;
-  n.path = [...(inCourt(n.pos.x, n.pos.z) ? [NAV.gateIn, NAV.gateOut] : []), spot].map(v => v.clone());
-  npcSay(n, 'Bekle, ben de geliyorum! 🙌', 2);
+  endActivity(n);
+  n.activity = 'seesaw';
+  travel(n, 'play', new THREE.Vector3(seesaw.pivot.x - 2.1, 0, seesaw.pivot.z + 0.6), ['seesaw']);
+  npcSay(n, 'Bekle Ali, ben de geliyorum! 🙌', 2);
 }
-function npcReturnToCourt(n, msg) {
-  n.pos.y = 0;
-  n.mode = 'break';
-  n.tasks = ['return'];
-  n.returnMsg = msg;
-  const spot = supportSpot(n, null);
-  n.path = (inCourt(n.pos.x, n.pos.z) ? [spot] : [NAV.gateOut, NAV.gateIn, spot]).map(v => v.clone());
+// Havuza yem at: kırıntılar suya düşer, balıklar oraya koşuşur (Ali ve arkadaşlar ortak kullanır)
+function pondFeedFrom(p) {
+  const dx = p.x - POND.cx, dz = p.z - POND.cz, d = Math.hypot(dx, dz) || 1;
+  pond.feedPoint.set(POND.cx + dx / d * (POND.r - 0.9), POND_WATER_Y + 0.01, POND.cz + dz / d * (POND.r - 0.9));
+  pond.feedUntil = time + 7;
+  pond.crumbs.visible = true;
+  pond.crumbData.forEach((c) => {
+    c.alive = true;
+    c.p.set(p.x - dx / d * 0.5, 1.2, p.z - dz / d * 0.5);
+    const tx = pond.feedPoint.x + rr(-0.35, 0.35), tz = pond.feedPoint.z + rr(-0.35, 0.35);
+    c.v.set((tx - c.p.x) / 0.6, 2.2, (tz - c.p.z) / 0.6);
+  });
 }
 
-function updateBreak(n, dt) {
+function updateNpcActivity(n, dt) {
   // Tahterevallide oturuyor: plankla birlikte iner-kalkar
   if (n.mode === 'seesaw') {
     if (!playerOnSeesaw()) {
       n.pos.set(seesaw.pivot.x - 2.1, 0, seesaw.pivot.z + 0.6);
-      npcReturnToCourt(n, 'Çok eğlenceliydi! 😄');
+      n.sitPose = false;
+      n.area = 'play';
+      chooseActivity(n, 'seesaw', 'Çok eğlenceliydi Ali! 😄');
       return;
     }
     const c = Math.cos(seesaw.angle), s = Math.sin(seesaw.angle), p = seesaw.pivot;
@@ -4724,13 +4923,17 @@ function updateBreak(n, dt) {
     n.heading = Math.PI / 2;
     n.speed = 0;
     n.vel.set(0, 0);
+    n.sitPose = true;
     if (time > n.nextChat) {
       n.nextChat = time + rr(3, 6);
       npcSay(n, pick2(['Yukarı! ⬆️', 'Aşağı! ⬇️', 'Hihi, çok eğlenceli! 😄', 'Wiii! 🎢']), 1.5);
     }
     return;
   }
-  if (n.tasks[0] === 'seesaw' && !playerOnSeesaw()) { npcReturnToCourt(n, 'Tamam, sahaya dönüyorum! 🏀'); return; }
+  if (n.mode === 'travel' && n.tasks[0] === 'seesaw' && !playerOnSeesaw()) {
+    chooseActivity(n, 'seesaw', 'Tamam, başka bir şey oynarım! 😊');
+    return;
+  }
   if (n.mode === 'eating') {
     const e = n.eat;
     e.t += dt;
@@ -4747,21 +4950,121 @@ function updateBreak(n, dt) {
       n.energy = Math.min(100, n.energy + (e.snack.drink ? 45 : 60));
       npcSay(n, e.snack.drink ? 'Oh be, su harika! 💧' : YUMMY[e.snack.id], 1.8);
       n.eat = null;
-      n.mode = 'break';
+      n.mode = 'travel';
       n.tasks.shift();
       planNextTask(n);
     }
     return;
   }
+  // ⛲ Havuz başında: balıkları izler, ara ara yem atar, bazen halka yolda yürür
+  if (n.mode === 'pond') {
+    n.energy = Math.max(0, n.energy - dt * 0.25);
+    if (n.energy < 30) { startBreak(n); return; }
+    if (time > n.activityUntil) { chooseActivity(n, 'pond'); return; }
+    if (n.path.length) {
+      const d = moveNpcFree(n, dt, n.path[0]);
+      if (d < 0.4) n.path.shift();
+    } else {
+      n.speed = 0;
+      n.vel.set(0, 0);
+      n.heading = lerpAngle(n.heading, Math.atan2(POND.cx - n.pos.x, POND.cz - n.pos.z), damp(4, dt));
+      if (time > n.feedAt) {
+        n.feedAt = time + rr(7, 13);
+        if (W.snow > 0.5) npcSay(n, 'Havuz buz tutmuş! ❄️', 1.8);
+        else {
+          n.passAnim = 1;
+          pondFeedFrom(n.pos);
+          npcSay(n, pick2(['Balıklar, yem geldi! 🐟', 'Bakın ne kadar tatlılar! 🐠', 'Hap hap hap! 🐟']), 1.8);
+        }
+      } else if (Math.random() < dt * 0.05) {
+        n.path = ringPts(pondAngle(n.pos), pondAngle(n.pos) + rr(-1, 1));
+      } else if (time > n.nextChat && distXZ(n.pos, player.pos) < 12) {
+        n.nextChat = time + rr(8, 14);
+        npcSay(n, 'Ali, sen de balıkları besle! 🐟', 2);
+      }
+    }
+    return;
+  }
+  // 🎠 Salıncakta: Ali gibi sarkaç, ayakla güç verir
+  if (n.mode === 'swingRide') {
+    n.energy = Math.max(0, n.energy - dt * 0.4);
+    if (n.energy < 30) { startBreak(n); return; }
+    if (time > n.activityUntil) { endActivity(n); chooseActivity(n, 'swing'); return; }
+    const s = swings[n.swingIdx];
+    n.rideT += dt;
+    n.amp = Math.min(0.62, n.amp + dt * 0.15);
+    const w = Math.sqrt(9.8 / SWING_L);
+    s.angle = n.amp * Math.sin(w * n.rideT);
+    s.vel = n.amp * w * Math.cos(w * n.rideT);
+    const c = Math.cos(s.angle), sn = Math.sin(s.angle), hip = 0.55 * n.scale;
+    n.pos.set(s.pivot.x, s.pivot.y - SWING_L * c + 0.03 - hip * c, s.pivot.z - SWING_L * sn - hip * sn);
+    n.heading = 0;
+    n.tiltX = s.angle;
+    n.speed = 0;
+    n.sitPose = true;
+    if (time > n.nextChat) {
+      n.nextChat = time + rr(5, 9);
+      npcSay(n, pick2(['Wiii! 🎠', 'Daha yükseğe! ⬆️', 'Uçuyorum! 🕊️']), 1.6);
+    }
+    return;
+  }
+  // 🛝 Kaydırakta: tırman → kay → arkadan dolaşıp tekrar merdivene
+  if (n.mode === 'slideRide') {
+    n.energy = Math.max(0, n.energy - dt * 0.5);
+    if (n.path.length) {
+      n.sitPose = false;
+      n.tiltX = 0;
+      const d = moveNpcFree(n, dt, n.path[0]);
+      if (d < 0.4) {
+        n.path.shift();
+        if (!n.path.length) {
+          if (n.energy < 30) { startBreak(n); return; }
+          if (time > n.activityUntil) { chooseActivity(n, 'slide'); return; }
+          n.rideT = 0;
+        }
+      }
+      return;
+    }
+    n.rideT += dt;
+    const t = n.rideT, A = SLIDE.chuteA, B = SLIDE.chuteB, hip = 0.55 * n.scale;
+    n.heading = Math.PI / 2;
+    n.speed = 0;
+    if (t < 1.3) {
+      const k = t / 1.3;
+      n.sitPose = false;
+      n.tiltX = 0;
+      n.pos.set(lerp(SLIDE.ladder.x, SLIDE.top.x - 0.1, k), Math.sin(k * Math.PI / 2) * 1.62, SLIDE.ladder.z);
+    } else if (t < 1.6) {
+      n.sitPose = true;
+      n.pos.set(A.x - 0.1, SLIDE.top.y + 0.05 - hip, A.z);
+    } else if (t < 2.6) {
+      const k = Math.pow((t - 1.6) / 1.0, 1.4);
+      n.sitPose = true;
+      n.pos.set(lerp(A.x, B.x, k), lerp(A.y, B.y, k) + 0.05 - hip, A.z);
+      n.tiltX = Math.atan2(A.y - B.y, B.x - A.x);
+      if (t - dt < 1.6) npcSay(n, pick2(['Kayyy! 🛝', 'Wiii! 😆', 'Bir daha! 😄']), 1.4);
+    } else {
+      // İndi: arkadan dolaşarak merdivene dön
+      n.pos.copy(SLIDE.exit);
+      n.tiltX = 0;
+      n.sitPose = false;
+      n.path = [
+        new THREE.Vector3(SLIDE.exit.x, 0, SLIDE.exit.z + 1.2),
+        new THREE.Vector3(SLIDE.ladder.x - 0.6, 0, SLIDE.ladder.z + 1.2),
+        new THREE.Vector3(SLIDE.ladder.x - 0.5, 0, SLIDE.ladder.z),
+      ];
+    }
+    return;
+  }
   // Yol noktalarını sırayla izle (takılırsa bir sonrakine geç)
   const wp = n.path[0];
-  if (!wp) { planNextTask(n); return; }
+  if (!wp) { n.area = n.destArea || n.area; arriveTask(n); return; }
   const d = moveNpcFree(n, dt, wp);
   n.stuckT = n.speed < 0.15 ? n.stuckT + dt : 0;
-  if (d < 0.4 || n.stuckT > 4) {
+  if (d < 0.45 || n.stuckT > 3) {
     n.path.shift();
     n.stuckT = 0;
-    if (!n.path.length) arriveTask(n);
+    if (!n.path.length) { n.area = n.destArea || n.area; arriveTask(n); }
   }
 }
 // Yol bitince: o anki görevi yap
@@ -4781,21 +5084,21 @@ function arriveTask(n) {
       planNextTask(n);
     }
   } else if (task === 'seesaw') {
-    if (playerOnSeesaw()) { n.mode = 'seesaw'; npcSay(n, 'Hazırım! Yukarı, aşağı! 🎢', 2); }
-    else npcReturnToCourt(n, 'Tamam, sahaya dönüyorum! 🏀');
+    if (playerOnSeesaw()) { n.mode = 'seesaw'; npcSay(n, 'Hazırım Ali! Yukarı, aşağı! 🎢', 2); }
+    else chooseActivity(n, 'seesaw', 'Tamam, başka bir şey oynarım! 😊');
+  } else if (task === 'act') {
+    beginActivity(n, n.nextAct);
   } else if (task === 'return') {
-    n.mode = 'play';
-    n.pos.y = 0;
-    n.target.copy(supportSpot(n, null));
-    npcSay(n, n.returnMsg || 'Enerjim doldu, hadi oynayalım! ⚡', 2);
-    n.returnMsg = null;
+    chooseActivity(n, null, 'Enerjim doldu! ⚡');
+  } else {
+    chooseActivity(n, null);
   }
 }
 function askForFruit(n) {
-  npcSay(n, 'Meyve bitmiş! Bahçeden toplar mısın? 🧺', 2.6);
-  if (distXZ(n.pos, player.pos) < 30) showToast(`🧺 ${n.name}: "Meyve bitmiş! Bahçeden toplar mısın?"`);
+  npcSay(n, 'Meyve bitmiş! Ali, bahçeden toplar mısın? 🧺', 2.6);
+  if (distXZ(n.pos, player.pos) < 30) showToast(`🧺 ${n.name}: "Meyve bitmiş! Ali, bahçeden toplar mısın?"`);
 }
-// Bir sonraki görevin yolunu hazırla
+// Moladaki bir sonraki görevin yolunu hazırla (odanın içinde)
 function planNextTask(n) {
   const task = n.tasks[0];
   if (task === 'fruit') {
@@ -4807,10 +5110,10 @@ function planNextTask(n) {
     }
     const id = Object.keys(stock).reduce((a, b) => (stock[b] > stock[a] ? b : a));
     n.path = [NAV.doorIn, NAV.hall, fruitSpot(id)].map(v => v.clone());
-  } else if (task === 'return') {
-    n.path = [NAV.hall, NAV.doorIn, NAV.doorOut, NAV.gateOut, NAV.gateIn, supportSpot(n, null)].map(v => v.clone());
+    n.destArea = 'lounge';
   } else {
-    n.mode = 'play';
+    n.tasks = ['return'];
+    arriveTask(n);
   }
 }
 
@@ -4825,7 +5128,7 @@ function moveNpc(n, dt, run, hasBall, holder) {
   n.pos.z += n.vel.y * dt;
   // Birbirlerine ve oyuncuya girmesinler
   for (const o of [player, ...npcs]) {
-    if (o === n) continue;
+    if (o === n || (o !== player && o.mode !== 'play' && o.mode !== 'travel')) continue;
     const ox = n.pos.x - o.pos.x, oz = n.pos.z - o.pos.z, od = Math.hypot(ox, oz) || 1e-4;
     if (od < 0.75) { n.pos.x += ox / od * (0.75 - od); n.pos.z += oz / od * (0.75 - od); }
   }
@@ -4844,6 +5147,7 @@ function moveNpc(n, dt, run, hasBall, holder) {
 function animateNpc(n, dt, hasBall, receiving) {
   n.root.position.copy(n.pos);
   n.root.rotation.y = n.heading;
+  n.root.rotation.x = n.tiltX;
   const sp = n.speed;
   const moveAmt = clamp(sp / 2.9, 0, 1), runAmt = clamp((sp - 2.9) / 1.7, 0, 1);
   n.walkPhase += dt * sp * 2.4;
@@ -4864,11 +5168,21 @@ function animateNpc(n, dt, hasBall, receiving) {
     rx = lerp(-0.75, dr, n.dribbleK); rz = lerp(0.24, -0.18, n.dribbleK);
   }
   if (receiving) { lx = -1.25; lz = -0.15; rx = -1.25; rz = 0.15; }
-  // Tahterevallide oturma pozu: bacaklar öne, eller tutamakta
-  if (n.mode === 'seesaw') {
+  // Oturma pozları: tahterevalli, salıncak, kaydırak
+  if (n.sitPose) {
     n.legL.rotation.x = -1.42; n.legR.rotation.x = -1.32;
     n.body.position.y = -0.19;
-    lx = rx = -1.05; lz = -0.25; rz = 0.25;
+    n.torso.rotation.x = 0;
+    if (n.mode === 'seesaw') { lx = rx = -1.05; lz = -0.25; rz = 0.25; }
+    else if (n.mode === 'swingRide') {
+      lx = rx = -2.75; lz = -0.1; rz = 0.1;
+      const pump = Math.cos(Math.sqrt(9.8 / SWING_L) * n.rideT);
+      n.legL.rotation.x += 0.35 * pump; n.legR.rotation.x += 0.35 * pump;
+    } else { lx = rx = -2.9; lz = -0.3; rz = 0.3; }      // kaydırakta "Wiii!"
+  } else if (n.mode === 'slideRide' && !n.path.length && n.rideT < 1.3) {
+    const c = Math.sin(n.rideT * 10);                     // merdiven tırmanma
+    lx = -2.5 + 0.4 * c; rx = -2.5 - 0.4 * c; lz = -0.1; rz = 0.1;
+    n.legL.rotation.x = -0.7 * Math.max(0, c); n.legR.rotation.x = -0.7 * Math.max(0, -c);
   }
   if (!hasBall && time < n.callUntil) { rx = -2.9; rz = 0.25 + Math.sin(time * 12) * 0.25; }
   if (n.shootAnim > 0) {
@@ -4891,13 +5205,15 @@ function animateNpc(n, dt, hasBall, receiving) {
   } else n.head.rotation.x = 0;
   n.armL.rotation.set(lx, 0, lz);
   n.armR.rotation.set(rx, 0, rz);
-  // At kuyruğu: koşarken ve rüzgarda geriye savrulur
+  // Saç kuyrukları: koşarken ve rüzgarda geriye savrulur
   const ch = Math.cos(n.heading), sh = Math.sin(n.heading);
-  if (n.tail) {
+  if (n.tails.length) {
     const wx = wind.dir.x * windStrength - n.vel.x * 0.15, wz = wind.dir.y * windStrength - n.vel.y * 0.15;
     const lzW = wx * sh + wz * ch, lxW = wx * ch - wz * sh;
-    n.tail.rotation.x = 0.2 - lzW * 0.6 + Math.abs(Math.sin(n.walkPhase)) * 0.15 * swing;
-    n.tail.rotation.z = lxW * 0.6 + Math.sin(n.walkPhase) * 0.1 * swing;
+    n.tails.forEach((t, i) => {
+      t.rotation.x = 0.2 - lzW * 0.6 + Math.abs(Math.sin(n.walkPhase + i)) * 0.15 * swing;
+      t.rotation.z = lxW * 0.6 + Math.sin(n.walkPhase + i) * 0.1 * swing;
+    });
   }
   // Top bu arkadaştaysa: iki elin arasında ya da sağ elinin altında sekiyor
   if (hasBall) {
@@ -4923,24 +5239,46 @@ function animateNpc(n, dt, hasBall, receiving) {
 
 // İsim etiketleri ve konuşma balonları karakterlerin başının üstünde dursun
 const _tagV = new THREE.Vector3();
+function placeTag(el, x, y, z) {
+  _tagV.set(x, y, z);
+  const d = camera.position.distanceTo(_tagV);
+  _tagV.project(camera);
+  const vis = started && _tagV.z < 1 && d < 45 && Math.abs(_tagV.x) < 1.15 && Math.abs(_tagV.y) < 1.15;
+  el.style.display = vis ? 'block' : 'none';
+  if (vis) {
+    el.style.left = `${(_tagV.x * 0.5 + 0.5) * window.innerWidth}px`;
+    el.style.top = `${(-_tagV.y * 0.5 + 0.5) * window.innerHeight}px`;
+  }
+  return vis;
+}
 function updateNpcTags() {
   for (const n of npcs) {
-    _tagV.set(n.pos.x, 2.12 * n.scale, n.pos.z);
-    const d = camera.position.distanceTo(_tagV);
-    _tagV.project(camera);
-    const vis = started && _tagV.z < 1 && d < 45 && Math.abs(_tagV.x) < 1.15 && Math.abs(_tagV.y) < 1.15;
-    n.tag.style.display = vis ? 'block' : 'none';
     if (n.sayUntil && time > n.sayUntil) { n.sayEl.classList.remove('show'); n.sayUntil = 0; }
-    if (!vis) continue;
+    if (!placeTag(n.tag, n.pos.x, n.pos.y + 2.12 * n.scale, n.pos.z)) continue;
     // Enerji çubuğu (azalınca turuncu)
     const ew = `${Math.round(n.energy)}%`;
     if (n.energyEl.style.width !== ew) n.energyEl.style.width = ew;
     n.energyEl.classList.toggle('low', n.energy < 35);
-    if (!vis) continue;
-    n.tag.style.left = `${(_tagV.x * 0.5 + 0.5) * window.innerWidth}px`;
-    n.tag.style.top = `${(-_tagV.y * 0.5 + 0.5) * window.innerHeight}px`;
   }
+  placeTag(aliTag, player.pos.x, player.pos.y + 2.12 - player.sitK * 0.2, player.pos.z);
 }
+
+// Başlangıç: herkes kendi etkinliğinin başında
+npcs.forEach((n, i) => {
+  const act = NPC_SPECS[i].act;
+  n.activity = act;
+  if (act === 'basket') { n.area = 'court'; n.mode = 'play'; n.activityUntil = rr(35, 70); return; }
+  n.area = act === 'pond' ? 'pond' : 'play';
+  if (act === 'pond') {
+    const a = rr(0, Math.PI * 2);
+    n.pos.set(POND.cx + Math.cos(a) * POND_STAND_R, 0, POND.cz + Math.sin(a) * POND_STAND_R);
+  } else if (act === 'swing') {
+    n.swingIdx = 1;
+    swings[1].reservedBy = n;
+  } else n.pos.set(SLIDE.ladder.x - 0.5, 0, SLIDE.ladder.z);
+  beginActivity(n, act);
+  n.activityUntil = rr(35, 70);
+});
 touchButton('btnPass', () => passOrRequest());
 const btnPass = document.getElementById('btnPass');
 
