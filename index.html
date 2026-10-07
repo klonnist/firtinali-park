@@ -668,6 +668,44 @@ const BASKET_HOME = new THREE.Vector3(-15.6, 0, -3.3);    // bahçe girişindeki
 const PLAY = { cx: 15, cz: 6, hx: 6, hz: 4.5 };
 const POND = { cx: -8, cz: 10, r: 3.2 };
 
+// ---------- Yürüyüş yolları: alanları birbirine bağlayan kıvrımlı taş yollar ----------
+const PATH_DEFS = [
+  { w: 1.7, pts: [[0, -1.2], [2.6, -6.5], [5.2, -11], [6, -14.2], [6, -16.3]] },             // meydan → basketbol sahası
+  { w: 1.6, pts: [[-1.3, -0.6], [-6.5, -3.3], [-12, -7.6], [-15.6, -9.8], [-17.4, -10]] },  // meydan → dinlenme odası
+  { w: 1.4, pts: [[-17.2, -10], [-16.6, -7.5], [-16.65, -4], [-16.9, -1.2]] },               // oda → meyve bahçesi
+  { w: 1.6, pts: [[1.3, 0.8], [4.6, 3.2], [9.0, 4.6]] },                                     // meydan → oyun alanı
+  { w: 1.6, pts: [[-1, 1.2], [-3.2, 4.2], [-5.0, 6.0]] },                                    // meydan → havuz
+  { w: 1.4, pts: [[5.6, -12.2], [9.5, -6], [12.6, -1], [13.6, 1.4]] },                       // saha ↔ oyun alanı
+  { w: 1.4, pts: [[-16.9, -1.2], [-15.6, 2.4], [-13.4, 6.0], [-11.7, 7.6]] },                // bahçe ↔ havuz
+];
+const POND_RING = { r: POND.r + 1.15, w: 1.1 };      // havuzun çevresini dolaşan halka yol
+const PLAZA_R = 2.6;                                  // başlangıçtaki taş meydan
+const PATH_SAMPLES = PATH_DEFS.map((d) => {
+  const curve = new THREE.CatmullRomCurve3(d.pts.map(([x, z]) => new THREE.Vector3(x, 0, z)));
+  const pts = curve.getSpacedPoints(Math.max(2, Math.ceil(curve.getLength() / 0.5)));
+  const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
+  return { curve, pts, w: d.w, minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+});
+// Bir noktanın en yakın yol kenarına uzaklığı (negatif = yolun üstünde)
+function pathEdgeDist(x, z) {
+  let best = Math.min(
+    Math.hypot(x, z) - PLAZA_R,
+    Math.abs(Math.hypot(x - POND.cx, z - POND.cz) - POND_RING.r) - POND_RING.w / 2,
+  );
+  for (const s of PATH_SAMPLES) {
+    const pad = s.w / 2 + 3;
+    if (x < s.minX - pad || x > s.maxX + pad || z < s.minZ - pad || z > s.maxZ + pad) continue;
+    for (let i = 0; i < s.pts.length - 1; i++) {
+      const a = s.pts[i], b = s.pts[i + 1];
+      const abx = b.x - a.x, abz = b.z - a.z;
+      const t = clamp(((x - a.x) * abx + (z - a.z) * abz) / (abx * abx + abz * abz || 1), 0, 1);
+      const d = Math.hypot(x - (a.x + abx * t), z - (a.z + abz * t)) - s.w / 2;
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
 function makeCourtTexture() {
   const PX = 40, W = COURT.hx * 2 * PX, H = COURT.hz * 2 * PX;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -852,6 +890,7 @@ function createTree(x, z, isPine) {
     // Boş kalacak alanlar: başlangıç noktası, saha, dinlenme odası ve aralarındaki yol
     if (Math.hypot(x, z) < 12 || inRect(x, z, COURT, 3.5) || inRect(x, z, LOUNGE, 4.5) || inRect(x, z, GARDEN, 4)) continue;
     if (inRect(x, z, PLAY, 3.5) || Math.hypot(x - POND.cx, z - POND.cz) < POND.r + 4.5) continue;
+    if (pathEdgeDist(x, z) < 2.2) continue;                     // yürüyüş yollarının üstüne ağaç gelmesin
     // Saha kapısından oyun alanına giden yol (arkadaş tahterevalliye gelirken)
     {
       const ax = COURT.cx, az = COURT.cz + COURT.hz + 1.3, bx = PLAY.cx + 1.2, bz = PLAY.cz - 1.8;
@@ -953,6 +992,7 @@ function updateTrees() {
     const x = (Math.random() * 2 - 1) * 98, z = (Math.random() * 2 - 1) * 98;
     if (inRect(x, z, COURT, 0.1) || inRect(x, z, LOUNGE, 0.3) || inRect(x, z, CARROT_BED, 0.05)) continue;   // saha, oda ve tarhta ot olmasın
     if (inRect(x, z, PLAY, 0.1) || Math.hypot(x - POND.cx, z - POND.cz) < POND.r + 0.5) continue;           // oyun alanı ve havuz
+    if (pathEdgeDist(x, z) < 0.05) continue;                                                                 // yürüyüş yolları
     e.set((Math.random() - 0.5) * 0.3, Math.random() * Math.PI, (Math.random() - 0.5) * 0.3);
     m.compose(p.set(x, 0, z), q.setFromEuler(e), s.set(0.8 + Math.random() * 0.8, 0.3 + Math.random() * 0.55, 1));
     mesh.setMatrixAt(i, m);
@@ -1568,14 +1608,6 @@ const basket = { group: null, contents: null, carried: false, fruits: { apple: 0
   const sign = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 1.9), makeSign('🌳 MEYVE BAHÇESİ', '#4a8a3a', '#ffffff'));
   sign.position.set(x1 + 0.06, 1.62, cz);
   scene.add(sign);
-  // Odadan bahçeye basamak taşları
-  const stoneMat = L(0xb7b2a8);
-  for (let i = 0; i < 8; i++) {
-    const t = i / 7;
-    const s = add(new THREE.CylinderGeometry(0.28, 0.3, 0.05, 9), stoneMat, lerp(-16.9, -16.3, t), 0.025, lerp(-9.6, -2.0, t));
-    s.castShadow = false;
-    s.rotation.y = i;
-  }
 
   // 🍎 Elma ağacı
   {
@@ -2077,12 +2109,133 @@ const POND_WATER_Y = 0.33;
   for (let i = 0; i < 16; i++) pond.crumbData.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), alive: false });
   // Havuz başında bank
   const benchWood = new THREE.MeshLambertMaterial({ color: 0x9a6a43 }), benchMetal = new THREE.MeshLambertMaterial({ color: 0x3a3f45 });
-  const bz = cz + R + 1.6;
+  const bz = cz + R + 2.2;                       // halka yolun dışında
   add(new THREE.BoxGeometry(1.8, 0.06, 0.45), benchWood, cx, 0.45, bz);
   add(new THREE.BoxGeometry(1.8, 0.35, 0.05), benchWood, cx, 0.75, bz + 0.22);
   for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.06, 0.45, 0.45), benchMetal, cx + s * 0.8, 0.22, bz);
   addWall(cx - 0.95, cx + 0.95, bz - 0.25, bz + 0.27, 0.8);
 })();
+// ---------- Yürüyüş yolları: taş döşeme şeritler + meydan + yön tabelası ----------
+(function buildPaths() {
+  // Döşeme taşı dokusu (kenarlarda koyu bordür)
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#b9a988'; g.fillRect(0, 0, 128, 256);
+  const cols = ['#d9c9a5', '#c7b791', '#cfc6b3', '#bdb08f', '#d4c19a'];
+  for (let row = 0; row < 8; row++) {
+    let x = 12 - (row % 2) * 18;
+    while (x < 116) {
+      const w = 22 + Math.random() * 16;
+      g.fillStyle = cols[Math.floor(Math.random() * cols.length)];
+      g.fillRect(Math.max(12, x) + 1.5, row * 32 + 2, Math.min(w, 116 - Math.max(12, x)) - 3, 28);
+      x += w;
+    }
+  }
+  g.fillStyle = '#8f8169'; g.fillRect(0, 0, 10, 256); g.fillRect(118, 0, 10, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const mat = addSnowCover(new THREE.MeshLambertMaterial({ map: tex }), 0.85);
+  const TILE = 1.8;                                 // dokunun boyuna tekrar aralığı (m)
+
+  // Eğri boyunca şerit geometrisi
+  PATH_SAMPLES.forEach((s, k) => {
+    const pts = s.curve.getSpacedPoints(Math.max(2, Math.ceil(s.curve.getLength() / 0.25)));
+    const pos = [], uv = [], idx = [];
+    let dist = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      let tx = b.x - a.x, tz = b.z - a.z;
+      const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+      const nx = -tz * s.w / 2, nz = tx * s.w / 2;
+      if (i > 0) dist += pts[i].distanceTo(pts[i - 1]);
+      pos.push(pts[i].x + nx, 0, pts[i].z + nz, pts[i].x - nx, 0, pts[i].z - nz);
+      uv.push(0, dist / TILE, 1, dist / TILE);
+      if (i > 0) { const j = i * 2; idx.push(j - 2, j, j - 1, j - 1, j, j + 1); }   // yukarı bakan yüz
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length / 3).fill([0, 1, 0]).flat(), 3));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0.018 + k * 0.0015;           // üst üste binen yollarda titreme olmasın
+    m.receiveShadow = true;
+    scene.add(m);
+  });
+  // Havuzu çevreleyen halka yol (uv: genişlik × çevre boyunca)
+  {
+    const inner = POND_RING.r - POND_RING.w / 2, outer = POND_RING.r + POND_RING.w / 2;
+    const geo = new THREE.RingGeometry(inner, outer, 72, 1);
+    geo.rotateX(-Math.PI / 2);
+    const p = geo.attributes.position, u = geo.attributes.uv;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      u.setXY(i, (Math.hypot(x, z) - inner) / POND_RING.w, (Math.atan2(z, x) + Math.PI) * POND_RING.r / TILE);
+    }
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(POND.cx, 0.02, POND.cz);
+    m.receiveShadow = true;
+    scene.add(m);
+  }
+  // Başlangıç meydanı (yolların buluştuğu yer)
+  {
+    // Meydan dokusu: döşeme taşları + dairesel bordür (daire uv'si dokuya oturur)
+    const pc = document.createElement('canvas'); pc.width = pc.height = 256;
+    const pg = pc.getContext('2d');
+    pg.fillStyle = '#b9a988'; pg.fillRect(0, 0, 256, 256);
+    for (let row = 0; row < 8; row++) {
+      for (let x = -(row % 2) * 16; x < 256; x += 32) {
+        pg.fillStyle = cols[Math.floor(Math.random() * cols.length)];
+        pg.fillRect(x + 1.5, row * 32 + 1.5, 29, 29);
+      }
+    }
+    pg.strokeStyle = '#8f8169'; pg.lineWidth = 12;
+    pg.beginPath(); pg.arc(128, 128, 122, 0, Math.PI * 2); pg.stroke();
+    pg.strokeStyle = 'rgba(143,129,105,0.6)'; pg.lineWidth = 5;
+    pg.beginPath(); pg.arc(128, 128, 58, 0, Math.PI * 2); pg.stroke();
+    const ptex = new THREE.CanvasTexture(pc);
+    ptex.colorSpace = THREE.SRGBColorSpace;
+    ptex.anisotropy = tex.anisotropy;
+    const geo = new THREE.CircleGeometry(PLAZA_R, 48);
+    geo.rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, addSnowCover(new THREE.MeshLambertMaterial({ map: ptex }), 0.85));
+    m.position.y = 0.03;
+    m.receiveShadow = true;
+    scene.add(m);
+  }
+  // Yön tabelası: her alanı gösteren ok biçimli levhalar
+  const SP = new THREE.Vector3(-2.3, 0, -2.4);
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8a5a3b });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 2.5, 8), wood);
+  post.position.set(SP.x, 1.25, SP.z);
+  post.castShadow = true;
+  scene.add(post);
+  colliders.push({ x: SP.x, z: SP.z, r: 0.12, h: 2.5 });
+  const dests = [
+    ['🏀 Basketbol Sahası', COURT.cx, COURT.cz + COURT.hz, '#c4532b'],
+    ['☕ Dinlenme Odası', LOUNGE.cx + LOUNGE.hx, LOUNGE.cz, '#2f5d8a'],
+    ['🌳 Meyve Bahçesi', GARDEN.cx + GARDEN.hx, GARDEN.cz, '#4a8a3a'],
+    ['🎠 Oyun Alanı', PLAY.cx - PLAY.hx, PLAY.cz, '#d94a4a'],
+    ['⛲ Süs Havuzu', POND.cx, POND.cz, '#2f8fb5'],
+  ];
+  dests.forEach(([text, tx, tz, color], i) => {
+    const arm = new THREE.Group();
+    arm.position.set(SP.x, 2.25 - i * 0.3, SP.z);
+    arm.rotation.y = Math.atan2(-(tz - SP.z), tx - SP.x);   // yerel +x hedefi gösterir
+    const board = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.24, 0.04), makeSign(text, color, '#ffffff', 512, 96));
+    board.position.x = 0.75;
+    board.castShadow = true;
+    arm.add(board);
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.17, 0.04), new THREE.MeshLambertMaterial({ color }));
+    tip.position.x = 1.4;
+    tip.rotation.z = Math.PI / 4;
+    arm.add(tip);
+    scene.add(arm);
+  });
+})();
+
 // Fıskiye damlası: 0..319 tepe fıskiyesi, kalanı çanaktan taşan su
 function spawnDrop(i) {
   const p = pond.dropPos, v = pond.dropVel, j = i * 3, a = Math.random() * Math.PI * 2;
